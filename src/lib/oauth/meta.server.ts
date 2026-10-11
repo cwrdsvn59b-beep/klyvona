@@ -2,13 +2,12 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { getSql } from "@/lib/db";
 import { openSecret, sealSecret } from "@/lib/crypto/tokens.server";
 import {
-  META_AUTHORIZE_URL,
   META_GRAPH_URL,
-  META_SCOPES,
   META_TOKEN_URL,
   OAUTH_STATE_TTL_MS,
   classifyAccounts,
   evaluateOAuthState,
+  facebookAuthorizeUrl,
   metaConfigProblem,
   secretMatches,
   selectionAllowed,
@@ -187,6 +186,8 @@ export function newConnectSecret(): { raw: string; hash: string } {
 export async function startMetaOAuth(request: Request, platform: Platform): Promise<Response> {
   if (platform === "instagram") return disabled(platform);
   if (metaConfigProblem()) return disabled(platform);
+  const configId = process.env.META_FACEBOOK_CONFIG_ID?.trim() ?? "";
+  if (!configId) return disabled(platform);
   const redirectUri = callbackUrl(request, platform);
   if (!redirectUri) return disabled(platform);
   const parsed = await readConnectBody(request);
@@ -205,12 +206,12 @@ export async function startMetaOAuth(request: Request, platform: Platform): Prom
       ${new Date(Date.now() + OAUTH_STATE_TTL_MS).toISOString()}
     )
   `;
-  const url = new URL(META_AUTHORIZE_URL);
-  url.searchParams.set("client_id", appCredentials().appId);
-  url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("state", `${id}.${nonce}`);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", META_SCOPES.join(","));
+  const url = facebookAuthorizeUrl({
+    appId: appCredentials().appId,
+    redirectUri,
+    state: `${id}.${nonce}`,
+    configId,
+  });
   const headers = new Headers();
   headers.append("set-cookie", stateCookie(id, request));
   return noStore({ oauthActivated: true, authorizeUrl: url.toString() }, 200, headers);

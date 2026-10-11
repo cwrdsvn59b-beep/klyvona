@@ -8,6 +8,22 @@ export const META_AUTHORIZE_URL = `https://www.facebook.com/${META_GRAPH_VERSION
 export const META_TOKEN_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`;
 export const META_GRAPH_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 
+export function facebookAuthorizeUrl(input: {
+  appId: string;
+  redirectUri: string;
+  state: string;
+  configId: string;
+}): string {
+  const url = new URL(META_AUTHORIZE_URL);
+  url.searchParams.set("client_id", input.appId);
+  url.searchParams.set("redirect_uri", input.redirectUri);
+  url.searchParams.set("state", input.state);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("override_default_response_type", "true");
+  url.searchParams.set("config_id", input.configId);
+  return url.toString();
+}
+
 /**
  * Permissions required for a person who manages their own Page and a linked
  * Instagram professional account. business_management is only for system users

@@ -5,6 +5,7 @@ import {
   INSTAGRAM_SCOPES,
   classifyAccounts,
   evaluateOAuthState,
+  facebookAuthorizeUrl,
   instagramAccountEligible,
   instagramAuthorizeUrl,
   instagramCallbackOutcome,
@@ -104,6 +105,29 @@ describe("configuration and encryption", () => {
 });
 
 describe("instagram login", () => {
+  it("builds the Facebook business login URL from the configuration id and without a scope", () => {
+    const url = new URL(
+      facebookAuthorizeUrl({
+        appId: "meta-app",
+        redirectUri: "https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback",
+        state: "state.nonce",
+        configId: "business-config",
+      }),
+    );
+    assert.equal(url.origin + url.pathname, "https://www.facebook.com/v26.0/dialog/oauth");
+    assert.equal(url.searchParams.get("client_id"), "meta-app");
+    assert.equal(url.searchParams.get("config_id"), "business-config");
+    assert.equal(url.searchParams.get("response_type"), "code");
+    assert.equal(url.searchParams.get("override_default_response_type"), "true");
+    assert.equal(
+      url.searchParams.get("redirect_uri"),
+      "https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback",
+    );
+    assert.equal(url.searchParams.get("state"), "state.nonce");
+    assert.equal(url.searchParams.get("scope"), null);
+    assert.equal(url.searchParams.get("client_secret"), null);
+  });
+
   it("uses Instagram credentials and business scopes, not the Facebook app", () => {
     const instagram = findProvider("instagram");
     const facebook = findProvider("facebook");
