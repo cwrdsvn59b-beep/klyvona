@@ -171,3 +171,34 @@ Instagram и Facebook идут в `https://www.facebook.com/v26.0/dialog/oauth` 
 
 Токен в webhook Make по-прежнему не отправляется.
 
+## 10. План перехода Instagram на Instagram Login
+
+Код приложения в этом коммите не меняется. `META_APP_ID` и `META_APP_SECRET` не перезаписываются. Сайт не публикуется. Значения секретов здесь не записаны.
+
+Сейчас отдельной переменной Instagram App ID нет. Оба входа читают `META_APP_ID` и `META_APP_SECRET`.
+
+Для отдельного Instagram Login нужны новые имена:
+
+- `INSTAGRAM_APP_ID`
+- `INSTAGRAM_APP_SECRET`
+
+Это Instagram App ID и Instagram App Secret из продукта Instagram Login. `TOKEN_ENCRYPTION_KEY` и `META_OAUTH_REDIRECT_ORIGIN` остаются. Callback остаётся:
+
+`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
+
+Разрешения нового потока: `instagram_business_basic` и `instagram_business_content_publish`.
+
+| Файл | Зачем |
+|---|---|
+| `src/lib/oauth/providers.ts` | Отдельные адреса и разрешения только у Instagram |
+| `src/lib/oauth/meta-guards.ts` | Проверка новых имён, без изменения проверки Facebook |
+| `src/lib/oauth/instagram.server.ts` | Новый поток: старт, обмен кода, профиль и продление |
+| `src/routes/api/oauth/$provider/start.ts` | Направить Instagram в новый поток |
+| `src/routes/api/oauth/$provider/callback.ts` | То же для callback |
+| `src/routes/api/oauth/meta/renew.ts` | Продление через `ig_refresh_token` |
+| `src/routes/connect.tsx` | Отдельная кнопка входа через Instagram |
+| `src/lib/oauth/meta-guards.test.ts` | Отказ без новых секретов и верные разрешения |
+| `src/lib/oauth/meta.server.ts` | Только отказ, если платформа `instagram`, чтобы вызов не пошёл в Facebook |
+
+Не меняются миграции, таблицы, AES-256-GCM, секрет клиента, Make, TikTok и обмен кода Facebook.
+
