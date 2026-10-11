@@ -386,3 +386,48 @@ State хранится 10 минут в PostgreSQL и привязан к кли
 
 Код готов к первому тесту только после этих пунктов. Их настройка не подтверждена. Chrome на iPhone, Chrome на Android и Samsung Internet не проверялись.
 
+## 16. Проверка Facebook OAuth после Secrets, 12 октября 2026
+
+Код приложения этим коммитом не меняется. Сайт не публикуется. Значения Secrets не читались и здесь не записаны. Авторизация Facebook не запускалась.
+
+### Итог
+
+Нажимать «Подключить Facebook» на опубликованном сайте пока нельзя. Исправление есть в локальной копии, но живой сервер его не подтвердил.
+
+| Проверка | Статус |
+| --- | --- |
+| `META_FACEBOOK_CONFIG_ID` виден серверу этой среды | NOT VERIFIED. В локальном процессе переменная отсутствует. |
+| Локальный Facebook-адрес | PASS |
+| Тот же адрес на опубликованном сайте | NOT VERIFIED |
+| В локальном Facebook-запросе нет разрешений Instagram | PASS |
+| На опубликованном сайте этих разрешений нет | NOT VERIFIED |
+| TypeScript и production build локального кода | PASS |
+| Пустой POST на живой `/api/oauth/facebook/start` | PASS: HTTP 401 `unauthorized`, без аварии |
+
+### Что подтверждено в локальном коде
+
+`src/lib/oauth/meta.server.ts`, функция `startMetaOAuth`, читает `META_FACEBOOK_CONFIG_ID`. Если переменная пуста, ответ 503 и state не создаётся. Иначе адрес собирается так:
+
+- `client_id` из `META_APP_ID` через `appCredentials().appId`;
+- `redirect_uri` из существующего `callbackUrl`, путь `/api/oauth/facebook/callback`;
+- `state` — одноразовое значение, привязанное к клиенту;
+- `response_type=code`;
+- `override_default_response_type=true`;
+- `config_id` из переменной окружения.
+
+Параметра `scope` в этой функции больше нет. Строк `instagram_basic` и `instagram_content_publish` в ней нет. `META_APP_SECRET`, callback, проверка state и шифрование токена не менялись. Instagram OAuth этим участком не вызывается: при платформе `instagram` функция сразу завершается.
+
+### Что подтверждено снаружи
+
+В GitHub на момент коммита `f357d5b` файл `src/lib/oauth/meta.server.ts` ещё ставит `scope` и не содержит `META_FACEBOOK_CONFIG_ID`.
+
+Живая страница `/connect` отдаёт `index-Bpe36ztV.js`. Локальная сборка с исправлением содержит `index-CzFI0xQZ.js`. Это разные сборки. Совпадение имени `connect-4knyTwDv.js` ничего не доказывает: страница подключения в этом исправлении не менялась.
+
+POST `{}` на `https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/start` вернул только `{"error":"unauthorized"}`. Это отказ из-за отсутствия клиента. Тот же ответ даёт и старый код, если обычные ключи Meta уже настроены. Поэтому 401 не доказывает, что в адрес подставлен `config_id`.
+
+Секреты Publish не видны локальному процессу. Имена `META_APP_ID`, `META_APP_SECRET`, `META_OAUTH_REDIRECT_ORIGIN` и `INSTAGRAM_APP_ID` в этой среде тоже отсутствуют. Их значения не запрашивались.
+
+### Что нужно до ручного теста
+
+Опубликовать локальное исправление и сохранить `META_FACEBOOK_CONFIG_ID` в Publish, Secrets. После этого один ручной запуск кнопки не меняет поток Instagram. До публикации кнопка на живом сайте может снова открыть старый адрес со `scope`.
+
