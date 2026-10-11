@@ -15,6 +15,7 @@ import {
   secretMatches,
   selectionAllowed,
   sha256Hex,
+  visiblePendingAccounts,
 } from "./meta-guards.ts";
 import { findProvider } from "./providers.ts";
 
@@ -170,5 +171,58 @@ describe("instagram login", () => {
     assert.equal(instagramAccountEligible("BUSINESS"), true);
     assert.equal(instagramAccountEligible("MEDIA_CREATOR"), true);
     assert.equal(instagramAccountEligible("PERSONAL"), false);
+  });
+});
+
+describe("instagram account list", () => {
+  const row = {
+    clientId: "client-a",
+    platform: "instagram",
+    externalAccountId: "1789",
+    name: "klyvona_business",
+    eligible: true,
+    reason: null,
+  };
+
+  it("shows one card for repeated OAuth of the same Instagram account id", () => {
+    const visible = visiblePendingAccounts([
+      { ...row, id: "1", createdAt: "2026-10-11T10:00:00Z" },
+      { ...row, id: "2", createdAt: "2026-10-11T11:00:00Z" },
+      { ...row, id: "3", createdAt: "2026-10-11T12:00:00Z" },
+      { ...row, id: "4", createdAt: "2026-10-11T13:00:00Z" },
+    ]);
+    assert.deepEqual(visible.map((item) => item.id), ["4"]);
+  });
+
+  it("does not treat the username as the unique key", () => {
+    const visible = visiblePendingAccounts([
+      { ...row, id: "1", createdAt: "2026-10-11T10:00:00Z", externalAccountId: "1789" },
+      { ...row, id: "2", createdAt: "2026-10-11T11:00:00Z", externalAccountId: "1790" },
+    ]);
+    assert.deepEqual(visible.map((item) => item.externalAccountId).sort(), ["1789", "1790"]);
+  });
+
+  it("keeps another customer's identical Instagram id separate", () => {
+    const visible = visiblePendingAccounts([
+      { ...row, id: "1", createdAt: "2026-10-11T10:00:00Z" },
+      { ...row, id: "2", clientId: "client-b", createdAt: "2026-10-11T11:00:00Z" },
+    ]);
+    assert.equal(visible.length, 2);
+  });
+
+  it("hides an account that is already saved for this customer", () => {
+    const visible = visiblePendingAccounts(
+      [
+        { ...row, id: "1", createdAt: "2026-10-11T10:00:00Z" },
+        { ...row, id: "2", createdAt: "2026-10-11T11:00:00Z" },
+      ],
+      [{ clientId: "client-a", platform: "instagram", externalAccountId: "1789" }],
+    );
+    assert.deepEqual(visible, []);
+    const other = visiblePendingAccounts(
+      [{ ...row, id: "1", createdAt: "2026-10-11T10:00:00Z" }],
+      [{ clientId: "client-b", platform: "instagram", externalAccountId: "1789" }],
+    );
+    assert.equal(other.length, 1);
   });
 });

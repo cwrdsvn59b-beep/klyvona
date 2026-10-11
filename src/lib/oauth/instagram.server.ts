@@ -255,25 +255,49 @@ export async function finishInstagramOAuth(
       ? await sealSecret(JSON.stringify({ v: 2, userToken: longLived.accessToken, igUserId: shortLived.userId }))
       : null;
     const expiresAt = longLived.expiresIn ? new Date(Date.now() + longLived.expiresIn * 1000).toISOString() : null;
-    await sql`
-      insert into oauth_pending_accounts (
-        id, client_id, state_id, platform, external_account_id, display_name,
-        eligible, ineligible_reason, token_ciphertext, token_expires_at, parent_external_id, expires_at
-      ) values (
-        ${randomUUID()},
-        ${row.client_id},
-        ${parsed.id},
-        ${"instagram"},
-        ${shortLived.userId},
-        ${profile.username || shortLived.userId},
-        ${eligible},
-        ${eligible ? null : "חשבון Instagram אינו מקצועי."},
-        ${packed},
-        ${expiresAt},
-        ${null},
-        ${new Date(Date.now() + PENDING_TTL_MS).toISOString()}
-      )
+    const pendingUntil = new Date(Date.now() + PENDING_TTL_MS).toISOString();
+    const existing = await sql<{ id: string }>`
+      select id from oauth_pending_accounts
+      where client_id = ${row.client_id}
+        and platform = 'instagram'
+        and external_account_id = ${shortLived.userId}
+      order by created_at desc
+      limit 1
     `;
+    if (existing[0]) {
+      await sql`
+        update oauth_pending_accounts
+        set state_id = ${parsed.id},
+            display_name = ${profile.username || shortLived.userId},
+            eligible = ${eligible},
+            ineligible_reason = ${eligible ? null : "חשבון Instagram אינו מקצועי."},
+            token_ciphertext = ${packed},
+            token_expires_at = ${expiresAt},
+            expires_at = ${pendingUntil},
+            created_at = now()
+        where id = ${existing[0].id} and client_id = ${row.client_id}
+      `;
+    } else {
+      await sql`
+        insert into oauth_pending_accounts (
+          id, client_id, state_id, platform, external_account_id, display_name,
+          eligible, ineligible_reason, token_ciphertext, token_expires_at, parent_external_id, expires_at
+        ) values (
+          ${randomUUID()},
+          ${row.client_id},
+          ${parsed.id},
+          ${"instagram"},
+          ${shortLived.userId},
+          ${profile.username || shortLived.userId},
+          ${eligible},
+          ${eligible ? null : "חשבון Instagram אינו מקצועי."},
+          ${packed},
+          ${expiresAt},
+          ${null},
+          ${pendingUntil}
+        )
+      `;
+    }
   } catch (error) {
     console.error("[instagram] callback failed", error instanceof Error ? error.message : "error");
     return back("exchange");

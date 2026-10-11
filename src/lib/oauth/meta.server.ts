@@ -13,6 +13,7 @@ import {
   secretMatches,
   selectionAllowed,
   sha256Hex,
+  visiblePendingAccounts,
 } from "@/lib/oauth/meta-guards";
 
 const STATE_COOKIE = "klyvona_meta_oauth";
@@ -318,22 +319,53 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
   const rows = await sql<{
     id: string;
     platform: string;
+    external_account_id: string;
     display_name: string;
     eligible: boolean;
     ineligible_reason: string | null;
+    created_at: string;
   }>`
-    select id, platform, display_name, eligible, ineligible_reason
+    select id, platform, external_account_id, display_name, eligible, ineligible_reason,
+      created_at::text as created_at
     from oauth_pending_accounts
     where client_id = ${parsed.client.id} and expires_at > now()
-    order by platform, display_name
   `;
-  return noStore({
-    accounts: rows.map((row) => ({
+  const saved = await sql<{ platform: string; external_account_id: string }>`
+    select platform, external_account_id
+    from social_accounts
+    where client_id = ${parsed.client.id}
+      and status = 'connected'
+      and external_account_id is not null
+      and platform in ('facebook', 'instagram')
+  `;
+  const visible = visiblePendingAccounts(
+    rows.map((row) => ({
       id: row.id,
+      clientId: parsed.client.id,
       platform: row.platform,
+      externalAccountId: row.external_account_id,
+      createdAt: row.created_at,
       name: row.display_name,
       eligible: row.eligible,
       reason: row.ineligible_reason,
+    })),
+    saved.map((row) => ({
+      clientId: parsed.client.id,
+      platform: row.platform,
+      externalAccountId: row.external_account_id,
+    })),
+  );
+  return noStore({
+    accounts: visible.map((row) => ({
+      id: row.id,
+      platform: row.platform,
+      name: row.name,
+      eligible: row.eligible,
+      reason: row.reason,
+    })),
+    connected: saved.map((row) => ({
+      platform: row.platform,
+      externalAccountId: row.external_account_id,
     })),
   });
 }

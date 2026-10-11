@@ -221,3 +221,32 @@ export function selectionAllowed(input: {
   if (!input.eligible) return "ineligible";
   return "ok";
 }
+
+export type PendingCandidate = {
+  id: string;
+  clientId: string;
+  platform: string;
+  externalAccountId: string;
+  createdAt: string;
+  name: string;
+  eligible: boolean;
+  reason: string | null;
+};
+
+/** One row per customer, platform and Instagram/Facebook account id. Username is not the key. */
+export function visiblePendingAccounts(
+  rows: readonly PendingCandidate[],
+  connected: readonly { clientId: string; platform: string; externalAccountId: string }[] = [],
+): PendingCandidate[] {
+  const connectedKeys = new Set(
+    connected.map((row) => `${row.clientId}\0${row.platform}\0${row.externalAccountId}`),
+  );
+  const best = new Map<string, PendingCandidate>();
+  for (const row of rows) {
+    const key = `${row.clientId}\0${row.platform}\0${row.externalAccountId}`;
+    if (connectedKeys.has(key)) continue;
+    const current = best.get(key);
+    if (!current || row.createdAt > current.createdAt) best.set(key, row);
+  }
+  return [...best.values()];
+}

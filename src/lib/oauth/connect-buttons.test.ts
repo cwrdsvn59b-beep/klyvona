@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "./connect-buttons.ts";
 
 describe("connect button independence", () => {
@@ -31,5 +32,16 @@ describe("connect button independence", () => {
     press("facebook");
     press("instagram");
     assert.deepEqual(launches, ["instagram", "facebook"]);
+  });
+});
+
+describe("connect page layout", () => {
+  it("keeps a single mobile column and the document RTL", () => {
+    const page = readFileSync(new URL("../../routes/connect.tsx", import.meta.url), "utf8");
+    const root = readFileSync(new URL("../../routes/__root.tsx", import.meta.url), "utf8");
+    assert.match(page, /max-w-xl px-4/);
+    assert.match(page, /grid gap-3/);
+    assert.match(root, /dir="rtl"/);
+    assert.doesNotMatch(page, /key=\{account\.name\}/);
   });
 });

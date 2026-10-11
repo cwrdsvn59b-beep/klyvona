@@ -11,6 +11,7 @@ export const Route = createFileRoute("/connect")({
 
 type Receipt = { reference?: string; connectSecret?: string; businessName?: string };
 type Account = { id: string; platform: string; name: string; eligible: boolean; reason: string | null };
+type Connected = { platform: string; externalAccountId: string };
 
 const ERRORS: Record<string, string> = {
   denied: "החיבור בוטל.",
@@ -25,9 +26,11 @@ const ERRORS: Record<string, string> = {
 function ConnectPage() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [connected, setConnected] = useState<Connected[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const pendingRef = useRef<ConnectPlatform | null>(null);
+  const savingRef = useRef(false);
   const [pending, setPending] = useState<ConnectPlatform | null>(null);
 
   useEffect(() => {
@@ -45,6 +48,10 @@ function ConnectPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (receipt?.connectSecret) void load();
+  }, [receipt?.reference]);
+
   async function post(path: string, extra: Record<string, string> = {}) {
     if (!receipt?.reference || !receipt.connectSecret) return null;
     const response = await fetch(path, {
@@ -52,7 +59,13 @@ function ConnectPage() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ reference: receipt.reference, connectSecret: receipt.connectSecret, ...extra }),
     });
-    const body = (await response.json()) as { authorizeUrl?: string; accounts?: Account[]; message?: string; error?: string };
+    const body = (await response.json()) as {
+      authorizeUrl?: string;
+      accounts?: Account[];
+      connected?: Connected[];
+      message?: string;
+      error?: string;
+    };
     return { response, body };
   }
 
@@ -86,18 +99,22 @@ function ConnectPage() {
       return;
     }
     setAccounts(result.body.accounts ?? []);
+    setConnected(result.body.connected ?? []);
   }
 
   async function choose(id: string) {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setBusy(true);
     const result = await post("/api/oauth/meta/select", { pendingId: id });
     setBusy(false);
+    savingRef.current = false;
     if (!result?.response.ok) {
       setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
       return;
     }
     setMessage("החשבון נשמר. האסימון נשאר בשרת.");
-    setAccounts((current) => current.filter((account) => account.id !== id));
+    await load();
   }
 
   async function act(path: string, platform: string) {
@@ -142,6 +159,15 @@ function ConnectPage() {
           <Button variant="secondary" disabled={busy} onClick={() => load()}>
             הצגת חשבונות שאושרו
           </Button>
+          {connected.map((item) => (
+            <article key={`${item.platform}:${item.externalAccountId}`} className="rounded-2xl bg-surface p-4 shadow-card">
+              <p className="font-semibold capitalize">{item.platform}</p>
+              <p className="text-sm text-ok">מחובר</p>
+              <p className="mt-1 break-all text-sm text-muted" dir="ltr">
+                {item.externalAccountId}
+              </p>
+            </article>
+          ))}
           {accounts.map((account) => (
             <article key={account.id} className="rounded-2xl bg-surface p-4 shadow-card">
               <p className="font-semibold">{account.name}</p>
