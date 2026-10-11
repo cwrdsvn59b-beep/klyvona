@@ -202,3 +202,55 @@ Instagram и Facebook идут в `https://www.facebook.com/v26.0/dialog/oauth` 
 
 Не меняются миграции, таблицы, AES-256-GCM, секрет клиента, Make, TikTok и обмен кода Facebook.
 
+## 11. Реализация Instagram Login, коммит 32d2632
+
+Дата: 11 октября 2026, около 19:18 UTC. Сайт https://spring-orbit-honey-baker.grok.me этим коммитом не публиковался. Значения секретов в репозиторий не входят.
+
+### Результат
+
+Instagram больше не идёт через Facebook Login. У него отдельный поток Instagram API with Instagram Login. Facebook, TikTok, Make, таблицы PostgreSQL и шифрование AES-256-GCM не переписывались.
+
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | **PASS** |
+| Тесты приложения | **PASS**, 80 из 80 |
+| `npm run build` | **PASS** |
+| Боевая база во время сборки | не открывалась: локально нет `DATABASE_URL`, мигратор написал `skipping` |
+| Реальный вход в Instagram | не запускался |
+
+### Изменённые файлы
+
+| Файл | Что сделано |
+|---|---|
+| `src/lib/oauth/providers.ts` | У Instagram свои адреса, разрешения и имена секретов |
+| `src/lib/oauth/meta-guards.ts` | Проверка `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`, сборка адреса авторизации |
+| `src/lib/oauth/instagram.server.ts` | Новый серверный поток |
+| `src/lib/oauth/meta.server.ts` | Три защитных выхода: `instagram` не попадает в обмен Facebook |
+| `src/routes/api/oauth/$provider/start.ts` | Instagram вызывает новый старт |
+| `src/routes/api/oauth/$provider/callback.ts` | Instagram вызывает новый callback |
+| `src/routes/api/oauth/meta/renew.ts` | Instagram продлевается отдельно |
+| `src/routes/connect.tsx` | Отдельная кнопка «התחברות עם Instagram» |
+| `src/lib/oauth/meta-guards.test.ts` | Разделение секретов, разрешения и отказ личного аккаунта |
+
+### Поток
+
+Старт принимает секрет клиента, пишет одноразовый state на 10 минут и ставит cookie `klyvona_ig_oauth`. Браузер уходит на `https://www.instagram.com/oauth/authorize`. Секрет приложения в этот адрес не попадает.
+
+Callback `https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback` сверяет cookie, хэш nonce, срок и платформу. State помечается использованным до обмена кода. Код обменивается на сервере через `POST https://api.instagram.com/oauth/access_token`. Короткий токен меняется на длинный через `https://graph.instagram.com/access_token` с `grant_type=ig_exchange_token`. Профиль читается с `https://graph.instagram.com/me`.
+
+Разрешения только `instagram_business_basic` и `instagram_business_content_publish`.
+
+Токен шифруется существующим AES-256-GCM и кладётся во временную строку `oauth_pending_accounts`. В JSON нет токена страницы Facebook: версия 2 хранит пользовательский токен и Instagram user id. Выбор аккаунта по-прежнему копирует уже зашифрованное значение в `social_accounts` и не отдаёт его браузеру или Make.
+
+Продление идёт на `https://graph.instagram.com/refresh_access_token` с `grant_type=ig_refresh_token`. Личный аккаунт помечается недопустимым, токен для него не сохраняется.
+
+### Секреты
+
+Facebook по-прежнему читает только `META_APP_ID` и `META_APP_SECRET`. Instagram читает только `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`. Общие и не изменённые имена: `TOKEN_ENCRYPTION_KEY`, `META_OAUTH_REDIRECT_ORIGIN`.
+
+Пока `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET` не заданы на публикации, `POST /api/oauth/instagram/start` отвечает HTTP 503 и `oauthActivated: false`. Успешное подключение не имитируется. Эти два имени нужно добавить в Publish > Secrets. Их значения сюда не входят. После этого сайт нужно опубликовать отдельно: этот коммит сам публикацию не делает.
+
+### Что не менялось
+
+Миграции, схема таблиц, `src/lib/crypto/tokens.server.ts`, сценарии Make, TikTok и обмен кода Facebook. Redirect URI остался прежним.
+
