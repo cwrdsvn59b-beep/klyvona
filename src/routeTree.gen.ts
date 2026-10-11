@@ -11,12 +11,17 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteRouteImport } from './routes/admin/route'
+import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as AdminClientsClientIdRouteImport } from './routes/admin/clients/$clientId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiOauthProviderCallbackRouteImport } from './routes/api/oauth/$provider/callback'
 import { Route as ApiOauthProviderStartRouteImport } from './routes/api/oauth/$provider/start'
+import { Route as ApiOauthMetaAccountsRouteImport } from './routes/api/oauth/meta/accounts'
+import { Route as ApiOauthMetaDisconnectRouteImport } from './routes/api/oauth/meta/disconnect'
+import { Route as ApiOauthMetaRenewRouteImport } from './routes/api/oauth/meta/renew'
+import { Route as ApiOauthMetaSelectRouteImport } from './routes/api/oauth/meta/select'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -26,6 +31,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRouteRoute = AdminRouteRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectRoute = ConnectRouteImport.update({
+  id: '/connect',
+  path: '/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -59,76 +69,131 @@ const ApiOauthProviderStartRoute = ApiOauthProviderStartRouteImport.update({
   path: '/api/oauth/$provider/start',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiOauthMetaAccountsRoute = ApiOauthMetaAccountsRouteImport.update({
+  id: '/api/oauth/meta/accounts',
+  path: '/api/oauth/meta/accounts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiOauthMetaDisconnectRoute = ApiOauthMetaDisconnectRouteImport.update({
+  id: '/api/oauth/meta/disconnect',
+  path: '/api/oauth/meta/disconnect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiOauthMetaRenewRoute = ApiOauthMetaRenewRouteImport.update({
+  id: '/api/oauth/meta/renew',
+  path: '/api/oauth/meta/renew',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiOauthMetaSelectRoute = ApiOauthMetaSelectRouteImport.update({
+  id: '/api/oauth/meta/select',
+  path: '/api/oauth/meta/select',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteRouteWithChildren
+  '/connect': typeof ConnectRoute
   '/login': typeof LoginRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
+  '/api/oauth/meta/disconnect': typeof ApiOauthMetaDisconnectRoute
+  '/api/oauth/meta/renew': typeof ApiOauthMetaRenewRoute
+  '/api/oauth/meta/select': typeof ApiOauthMetaSelectRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/connect': typeof ConnectRoute
   '/login': typeof LoginRoute
   '/admin': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
+  '/api/oauth/meta/disconnect': typeof ApiOauthMetaDisconnectRoute
+  '/api/oauth/meta/renew': typeof ApiOauthMetaRenewRoute
+  '/api/oauth/meta/select': typeof ApiOauthMetaSelectRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteRouteWithChildren
+  '/connect': typeof ConnectRoute
   '/login': typeof LoginRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
+  '/api/oauth/meta/disconnect': typeof ApiOauthMetaDisconnectRoute
+  '/api/oauth/meta/renew': typeof ApiOauthMetaRenewRoute
+  '/api/oauth/meta/select': typeof ApiOauthMetaSelectRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/admin'
+    | '/connect'
     | '/login'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/meta/accounts'
+    | '/api/oauth/meta/disconnect'
+    | '/api/oauth/meta/renew'
+    | '/api/oauth/meta/select'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/connect'
     | '/login'
     | '/admin'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/meta/accounts'
+    | '/api/oauth/meta/disconnect'
+    | '/api/oauth/meta/renew'
+    | '/api/oauth/meta/select'
   id:
     | '__root__'
     | '/'
     | '/admin'
+    | '/connect'
     | '/login'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/meta/accounts'
+    | '/api/oauth/meta/disconnect'
+    | '/api/oauth/meta/renew'
+    | '/api/oauth/meta/select'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRouteRoute: typeof AdminRouteRouteWithChildren
+  ConnectRoute: typeof ConnectRoute
   LoginRoute: typeof LoginRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiOauthProviderCallbackRoute: typeof ApiOauthProviderCallbackRoute
   ApiOauthProviderStartRoute: typeof ApiOauthProviderStartRoute
+  ApiOauthMetaAccountsRoute: typeof ApiOauthMetaAccountsRoute
+  ApiOauthMetaDisconnectRoute: typeof ApiOauthMetaDisconnectRoute
+  ApiOauthMetaRenewRoute: typeof ApiOauthMetaRenewRoute
+  ApiOauthMetaSelectRoute: typeof ApiOauthMetaSelectRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -145,6 +210,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connect': {
+      id: '/connect'
+      path: '/connect'
+      fullPath: '/connect'
+      preLoaderRoute: typeof ConnectRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -189,6 +261,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOauthProviderStartRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/oauth/meta/accounts': {
+      id: '/api/oauth/meta/accounts'
+      path: '/api/oauth/meta/accounts'
+      fullPath: '/api/oauth/meta/accounts'
+      preLoaderRoute: typeof ApiOauthMetaAccountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/oauth/meta/disconnect': {
+      id: '/api/oauth/meta/disconnect'
+      path: '/api/oauth/meta/disconnect'
+      fullPath: '/api/oauth/meta/disconnect'
+      preLoaderRoute: typeof ApiOauthMetaDisconnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/oauth/meta/renew': {
+      id: '/api/oauth/meta/renew'
+      path: '/api/oauth/meta/renew'
+      fullPath: '/api/oauth/meta/renew'
+      preLoaderRoute: typeof ApiOauthMetaRenewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/oauth/meta/select': {
+      id: '/api/oauth/meta/select'
+      path: '/api/oauth/meta/select'
+      fullPath: '/api/oauth/meta/select'
+      preLoaderRoute: typeof ApiOauthMetaSelectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -209,10 +309,15 @@ const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRouteRoute: AdminRouteRouteWithChildren,
+  ConnectRoute: ConnectRoute,
   LoginRoute: LoginRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiOauthProviderCallbackRoute: ApiOauthProviderCallbackRoute,
   ApiOauthProviderStartRoute: ApiOauthProviderStartRoute,
+  ApiOauthMetaAccountsRoute: ApiOauthMetaAccountsRoute,
+  ApiOauthMetaDisconnectRoute: ApiOauthMetaDisconnectRoute,
+  ApiOauthMetaRenewRoute: ApiOauthMetaRenewRoute,
+  ApiOauthMetaSelectRoute: ApiOauthMetaSelectRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

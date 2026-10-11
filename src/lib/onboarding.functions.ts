@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { parseOnboarding, type OnboardingData } from "@/lib/onboarding-schema";
+import { newConnectSecret } from "@/lib/oauth/meta.server";
 
 export type SubmitResult =
   | {
@@ -8,6 +9,7 @@ export type SubmitResult =
       reference: string;
       webhook: "skipped" | "sent" | "failed";
       webhookDetail: string;
+      connectSecret: string;
       plan: {
         code: string;
         nameHe: string;
@@ -183,6 +185,10 @@ export const submitOnboarding = createServerFn({ method: "POST" })
     if (!clientId) {
       return { ok: false, message: "הפנייה נשמרה חלקית. פנו לצוות עם הפרטים שמלאתם.", fieldErrors: {} };
     }
+    const connectSecret = newConnectSecret();
+    await (await getSql())`
+      update clients set connect_secret_hash = ${connectSecret.hash} where id = ${clientId}
+    `;
 
     const { notifyMake } = await import("@/lib/integrations/make.server");
     const webhook = await notifyMake({
@@ -232,6 +238,7 @@ export const submitOnboarding = createServerFn({ method: "POST" })
       reference,
       webhook: webhook.status,
       webhookDetail: webhook.detail,
+      connectSecret: connectSecret.raw,
       plan: {
         code: inserted.plan_code,
         nameHe: inserted.name_he,

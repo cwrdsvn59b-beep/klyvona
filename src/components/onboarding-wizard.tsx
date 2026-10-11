@@ -598,14 +598,20 @@ function Confirmation({ receipt, onReset }: { receipt: Receipt; onReset: () => v
             : " · ללא עלות"}
           . סטטוס: {statusLabel(receipt.plan.subscriptionStatus)}.
         </li>
-        <li>חיבור Meta ו-TikTok לא יופעל לפני אימות נפרד. פרסום בפועל לא מתחיל לפני כן.</li>
+        <li>חיבור Meta נפתח רק אחרי שהפנייה נשמרה, ורק אם השרת מוגדר. TikTok עדיין ממתין. פרסום אוטומטי לא מתחיל.</li>
         <li>{VIDEO_NOTE}</li>
         <li>{webhookCopy}</li>
       </ul>
       <p className="mt-4 text-sm text-muted">
         מסלול שנבחר בטופס: {planLabel(receipt.plan.code)}. אם בחרתם במסלול החודשי, החיוב לא מתבצע כאן.
       </p>
-      <Button className="mt-6" variant="secondary" onClick={onReset}>
+      <a
+        href="/connect"
+        className="mt-6 inline-flex h-12 items-center justify-center rounded-xl bg-primary px-5 text-sm font-semibold text-white"
+      >
+        חיבור Facebook ו-Instagram
+      </a>
+      <Button className="mt-3" variant="secondary" onClick={onReset}>
         פנייה חדשה
       </Button>
     </div>
