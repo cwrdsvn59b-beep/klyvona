@@ -7,7 +7,9 @@ import {
   evaluateOAuthState,
   instagramAccountEligible,
   instagramAuthorizeUrl,
+  instagramCallbackOutcome,
   instagramConfigProblem,
+  instagramConnectReturn,
   metaConfigProblem,
   readInstagramShortToken,
   secretMatches,
@@ -134,6 +136,29 @@ describe("instagram login", () => {
     assert.equal(url.searchParams.get("scope"), "instagram_business_basic,instagram_business_content_publish");
     assert.equal(url.searchParams.get("client_secret"), null);
     assert.equal(url.searchParams.get("client_id"), "ig-app");
+    assert.equal(url.hash, "#weblink");
+    assert.equal(url.searchParams.get("response_type"), "code");
+    assert.equal(url.searchParams.get("state"), "state.nonce");
+    assert.equal(findProvider("facebook")?.authorizeUrl.includes("#weblink"), false);
+  });
+
+  it("keeps iPhone on the browser login and returns the customer to KLYVONA", () => {
+    const started = new URL(
+      instagramAuthorizeUrl({
+        appId: "ig-app",
+        redirectUri: "https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback",
+        state: "state.nonce",
+      }),
+    );
+    assert.equal(started.hash, "#weblink");
+    assert.equal(started.searchParams.get("redirect_uri")?.includes("#"), false);
+    assert.equal(instagramCallbackOutcome(new URLSearchParams("error=access_denied")), "denied");
+    assert.equal(instagramCallbackOutcome(new URLSearchParams("error=server_error")), "exchange");
+    assert.equal(instagramCallbackOutcome(new URLSearchParams("state=state.nonce")), "state");
+    assert.equal(instagramCallbackOutcome(new URLSearchParams("code=once&state=state.nonce")), "ready");
+    assert.equal(instagramConnectReturn("denied"), "/connect?error=denied");
+    assert.equal(instagramConnectReturn("exchange"), "/connect?error=exchange");
+    assert.equal(instagramConnectReturn("ready"), "/connect?ready=1");
   });
 
   it("reads the short-lived token shape and rejects a personal account", () => {

@@ -8,8 +8,10 @@ import {
   evaluateOAuthState,
   instagramAccountEligible,
   instagramAuthorizeUrl,
+  instagramCallbackOutcome,
   instagramCallbackUrl,
   instagramConfigProblem,
+  instagramConnectReturn,
   readInstagramShortToken,
   secretMatches,
   sha256Hex,
@@ -200,11 +202,14 @@ export async function finishInstagramOAuth(
   graph: InstagramGraph = liveInstagramGraph,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const back = (code: string) => Response.redirect(new URL(`/connect?error=${code}`, url.origin), 303);
-  if (url.searchParams.get("error")) return back("denied");
+  const outcome = instagramCallbackOutcome(url.searchParams);
+  if (outcome !== "ready") {
+    return Response.redirect(new URL(instagramConnectReturn(outcome), url.origin), 303);
+  }
   if (instagramConfigProblem()) return disabled();
   const redirectUri = instagramCallbackUrl(request);
   if (!redirectUri) return disabled();
+  const back = (code: string) => Response.redirect(new URL(`/connect?error=${code}`, url.origin), 303);
   const parsed = parseState(url.searchParams.get("state"));
   const rawCode = url.searchParams.get("code");
   const code = rawCode?.replace(/#_$/, "") ?? "";

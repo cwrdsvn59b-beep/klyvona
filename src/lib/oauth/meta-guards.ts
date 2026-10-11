@@ -97,7 +97,27 @@ export function instagramAuthorizeUrl(input: { appId: string; redirectUri: strin
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
   url.searchParams.set("state", input.state);
+  // Instagram's own apple-app-site-association excludes the "weblink" fragment,
+  // so iOS keeps the login page in the browser instead of opening the app.
+  url.hash = "weblink";
   return url.toString();
+}
+
+export type InstagramCallbackOutcome = "denied" | "exchange" | "state" | "ready";
+
+export function instagramCallbackOutcome(search: { get(name: string): string | null }): InstagramCallbackOutcome {
+  const error = search.get("error");
+  if (error === "access_denied") return "denied";
+  if (error) return "exchange";
+  const state = search.get("state");
+  const code = (search.get("code") ?? "").replace(/#_$/, "");
+  if (!state || !state.includes(".") || !code) return "state";
+  return "ready";
+}
+
+export function instagramConnectReturn(outcome: InstagramCallbackOutcome): string {
+  if (outcome === "ready") return "/connect?ready=1";
+  return `/connect?error=${outcome}`;
 }
 
 export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string } | null {
