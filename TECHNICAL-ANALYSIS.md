@@ -352,3 +352,37 @@ Callback не ставит `social_accounts.status = connected`. Он пишет
 
 Для подтверждения этого Allow нужны адрес после возврата и наличие строки `oauth_pending_accounts` с платформой `instagram` и заполненным `used_at` у state. Токен и код авторизации не нужны.
 
+## 15. Facebook OAuth и Android, этап 1, 11 октября 2026
+
+Код не менялся. Сайт не публиковался. Секреты не читались. Реальный Android не проверялся. Instagram на iPhone Safari уже прошёл успешно.
+
+### Facebook
+
+Сервер собирает `https://www.facebook.com/v26.0/dialog/oauth`. Параметры: `client_id` из `META_APP_ID`, `redirect_uri`, `state`, `response_type=code`, `scope`. `META_APP_SECRET` в адрес не входит. Код: `src/lib/oauth/meta.server.ts` и `src/lib/oauth/meta-guards.ts`.
+
+Redirect URI: `{META_OAUTH_REDIRECT_ORIGIN}/api/oauth/facebook/callback`. Тот же origin уже вернул успешный Instagram, поэтому при текущем значении путь такой:
+
+`https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback`
+
+Регистрация этого адреса в продукте Facebook Login не подтверждена. Адрес Instagram Login туда сам не копируется.
+
+State хранится 10 минут в PostgreSQL и привязан к клиенту. Cookie `klyvona_meta_oauth` отдельная, HttpOnly, SameSite=Lax. Заявка остаётся в `sessionStorage` того же браузера.
+
+Разрешения: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`. После Allow сервер меняет код на токен и читает `GET /me/accounts`. Выбранная страница пишется в `social_accounts` этой заявки. После обновления страницы экран показывает «מחובר». Если Страницы нет, список пуст и статус не меняется.
+
+### Перехват приложением
+
+Файл Apple у Facebook исключает только `/dialog/oauth`. Код открывает `/v26.0/dialog/oauth`. Фрагмента `#weblink` у Facebook нет. На iPhone приложение Facebook может перехватить вход. На Android это не проверялось.
+
+Повторный Facebook OAuth всё ещё может добавить строки в `oauth_pending_accounts`. На экране остаётся одна карточка на ID страницы. Старые строки не удалялись.
+
+### Что проверить в Meta до Allow
+
+1. Facebook Login включён.
+2. Valid OAuth Redirect URIs содержит точный callback выше.
+3. Есть `pages_show_list`, `pages_manage_posts` и `pages_read_engagement`. `instagram_basic` и `instagram_content_publish` либо добавлены, либо диалог может отказать.
+4. Пользователь телефона — администратор, разработчик или тестировщик, пока приложение в разработке.
+5. У пользователя есть Страница Facebook, которой он управляет.
+
+Код готов к первому тесту только после этих пунктов. Их настройка не подтверждена. Chrome на iPhone, Chrome на Android и Samsung Internet не проверялись.
+
