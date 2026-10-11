@@ -2,7 +2,7 @@
 
 Исходники портала онбординга и технические отчёты.
 
-- Полный анализ текущей версии: [TECHNICAL-ANALYSIS.md](TECHNICAL-ANALYSIS.md)
+- Полный анализ текущей версии и проверки: [TECHNICAL-ANALYSIS.md](TECHNICAL-ANALYSIS.md)
 - Конструкция: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Предыдущая проверка сайта и Secrets: [TECHNICAL-REPORT.md](TECHNICAL-REPORT.md)
 
