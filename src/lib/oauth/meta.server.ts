@@ -184,6 +184,7 @@ export function newConnectSecret(): { raw: string; hash: string } {
 }
 
 export async function startMetaOAuth(request: Request, platform: Platform): Promise<Response> {
+  if (platform === "instagram") return disabled(platform);
   if (metaConfigProblem()) return disabled(platform);
   const redirectUri = callbackUrl(request, platform);
   if (!redirectUri) return disabled(platform);
@@ -226,6 +227,7 @@ export async function finishMetaOAuth(
   platform: Platform,
   graph: MetaGraph = liveMetaGraph,
 ): Promise<Response> {
+  if (platform === "instagram") return disabled(platform);
   const url = new URL(request.url);
   const back = (code: string) => Response.redirect(new URL(`/connect?error=${code}`, url.origin), 303);
   if (url.searchParams.get("error")) return back("denied");
@@ -396,6 +398,7 @@ export async function renewMeta(request: Request, graph: MetaGraph = liveMetaGra
   if (metaConfigProblem()) return disabled("meta");
   const parsed = await readConnectBody(request);
   if (!parsed?.platform) return noStore({ error: "unauthorized" }, 401);
+  if (parsed.platform === "instagram") return disabled("instagram");
   const sql = await getSql();
   const rows = await sql<{ token_ciphertext: string | null }>`
     select token_ciphertext from social_accounts

@@ -12,7 +12,7 @@ type Receipt = { reference?: string; connectSecret?: string; businessName?: stri
 type Account = { id: string; platform: string; name: string; eligible: boolean; reason: string | null };
 
 const ERRORS: Record<string, string> = {
-  denied: "החיבור בוטל ב-Facebook.",
+  denied: "החיבור בוטל.",
   state: "בקשת החיבור לא אומתה. התחילו שוב.",
   csrf: "בקשת החיבור לא אומתה. התחילו שוב.",
   expired: "תוקף בקשת החיבור פג. התחילו שוב.",
@@ -104,7 +104,7 @@ function ConnectPage() {
         <BrandMark className="h-12 w-12 rounded-xl" />
         <div>
           <p className="text-lg font-semibold tracking-wide">KLYVONA</p>
-          <p className="text-sm text-muted">חיבור עמוד Facebook וחשבון Instagram מקצועי</p>
+          <p className="text-sm text-muted">חיבור עמוד Facebook או חשבון Instagram מקצועי</p>
         </div>
       </div>
       <h1 className="mt-8 text-3xl font-semibold tracking-tight">חשבונות שבשליטתכם</h1>
@@ -118,6 +118,9 @@ function ConnectPage() {
         <div className="mt-6 grid gap-3">
           <Button disabled={busy} onClick={() => start("facebook")}>
             התחברות עם Facebook
+          </Button>
+          <Button disabled={busy} onClick={() => start("instagram")}>
+            התחברות עם Instagram
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => load()}>
             הצגת חשבונות שאושרו

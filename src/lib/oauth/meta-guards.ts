@@ -21,6 +21,11 @@ export const META_SCOPES = [
   "instagram_content_publish",
 ] as const;
 
+export const INSTAGRAM_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
+export const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
+export const INSTAGRAM_GRAPH_URL = "https://graph.instagram.com";
+export const INSTAGRAM_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"] as const;
+
 export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 const PUBLISH_TASKS = new Set(["CREATE_CONTENT", "MANAGE", "PROFILE_PLUS_CREATE_CONTENT", "PROFILE_PLUS_FULL_CONTROL"]);
@@ -60,6 +65,58 @@ export function metaConfigProblem(env: NodeJS.ProcessEnv = process.env): string 
     return "The public OAuth callback origin is not configured.";
   }
   return null;
+}
+
+export function instagramConfigProblem(env: NodeJS.ProcessEnv = process.env): string | null {
+  const database = productionDatabaseProblem(env);
+  if (database) return database;
+  if (!env.INSTAGRAM_APP_ID?.trim() || !env.INSTAGRAM_APP_SECRET?.trim()) {
+    return "Instagram app credentials are not configured.";
+  }
+  if (!encryptionKeyReady(env.TOKEN_ENCRYPTION_KEY)) {
+    return "TOKEN_ENCRYPTION_KEY is not configured.";
+  }
+  const published = Boolean(env.GROK_PROJECT_ID?.trim()) || env.VERCEL_ENV === "production";
+  if (published && !env.BETTER_AUTH_URL?.trim() && !env.META_OAUTH_REDIRECT_ORIGIN?.trim()) {
+    return "The public OAuth callback origin is not configured.";
+  }
+  return null;
+}
+
+export function instagramCallbackUrl(request: Request, env: NodeJS.ProcessEnv = process.env): string | null {
+  const explicit = env.META_OAUTH_REDIRECT_ORIGIN?.trim() || env.BETTER_AUTH_URL?.trim();
+  const origin = explicit ? explicit.replace(/\/$/, "") : instagramConfigProblem(env) ? null : new URL(request.url).origin;
+  if (!origin) return null;
+  return `${origin}/api/oauth/instagram/callback`;
+}
+
+export function instagramAuthorizeUrl(input: { appId: string; redirectUri: string; state: string }): string {
+  const url = new URL(INSTAGRAM_AUTHORIZE_URL);
+  url.searchParams.set("client_id", input.appId);
+  url.searchParams.set("redirect_uri", input.redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
+  url.searchParams.set("state", input.state);
+  return url.toString();
+}
+
+export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  const entry = Array.isArray(record.data) ? record.data[0] : record;
+  if (!entry || typeof entry !== "object") return null;
+  const row = entry as Record<string, unknown>;
+  const accessToken = typeof row.access_token === "string" ? row.access_token : "";
+  const userId =
+    typeof row.user_id === "string" || typeof row.user_id === "number" ? String(row.user_id) : "";
+  if (!accessToken || !userId) return null;
+  return { accessToken, userId };
+}
+
+export function instagramAccountEligible(accountType: string | null): boolean {
+  if (!accountType) return true;
+  const value = accountType.toUpperCase();
+  return value === "BUSINESS" || value === "MEDIA_CREATOR";
 }
 
 export type StateVerdict = "ok" | "missing" | "mismatch" | "expired" | "used" | "csrf";

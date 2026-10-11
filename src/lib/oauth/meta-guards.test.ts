@@ -2,13 +2,19 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { sealSecret, openSecret } from "../crypto/tokens.server.ts";
 import {
+  INSTAGRAM_SCOPES,
   classifyAccounts,
   evaluateOAuthState,
+  instagramAccountEligible,
+  instagramAuthorizeUrl,
+  instagramConfigProblem,
   metaConfigProblem,
+  readInstagramShortToken,
   secretMatches,
   selectionAllowed,
   sha256Hex,
 } from "./meta-guards.ts";
+import { findProvider } from "./providers.ts";
 
 const now = new Date("2026-10-11T12:00:00Z");
 
@@ -91,5 +97,53 @@ describe("configuration and encryption", () => {
     assert.equal(await openSecret(sealed), "page-token");
     delete process.env.TOKEN_ENCRYPTION_KEY;
     await assert.rejects(sealSecret("page-token"), /TOKEN_ENCRYPTION_KEY/);
+  });
+});
+
+describe("instagram login", () => {
+  it("uses Instagram credentials and business scopes, not the Facebook app", () => {
+    const instagram = findProvider("instagram");
+    const facebook = findProvider("facebook");
+    assert.equal(instagram?.clientIdEnv, "INSTAGRAM_APP_ID");
+    assert.equal(instagram?.clientSecretEnv, "INSTAGRAM_APP_SECRET");
+    assert.equal(facebook?.clientIdEnv, "META_APP_ID");
+    assert.equal(facebook?.clientSecretEnv, "META_APP_SECRET");
+    assert.deepEqual([...INSTAGRAM_SCOPES], ["instagram_business_basic", "instagram_business_content_publish"]);
+    assert.match(instagram?.authorizeUrl ?? "", /^https:\/\/www\.instagram\.com\/oauth\/authorize$/);
+    assert.match(facebook?.authorizeUrl ?? "", /^https:\/\/www\.facebook\.com\//);
+  });
+
+  it("fails closed without Instagram credentials and does not accept Meta credentials instead", () => {
+    assert.match(instagramConfigProblem({ META_APP_ID: "meta", META_APP_SECRET: "meta-secret" }) ?? "", /Instagram app credentials/);
+    assert.match(
+      metaConfigProblem({ INSTAGRAM_APP_ID: "ig", INSTAGRAM_APP_SECRET: "ig-secret" }) ?? "",
+      /Meta app credentials/,
+    );
+  });
+
+  it("builds the Instagram authorize URL without a secret and keeps the existing callback path", () => {
+    const url = new URL(
+      instagramAuthorizeUrl({
+        appId: "ig-app",
+        redirectUri: "https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback",
+        state: "state.nonce",
+      }),
+    );
+    assert.equal(url.origin + url.pathname, "https://www.instagram.com/oauth/authorize");
+    assert.equal(url.searchParams.get("redirect_uri"), "https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback");
+    assert.equal(url.searchParams.get("scope"), "instagram_business_basic,instagram_business_content_publish");
+    assert.equal(url.searchParams.get("client_secret"), null);
+    assert.equal(url.searchParams.get("client_id"), "ig-app");
+  });
+
+  it("reads the short-lived token shape and rejects a personal account", () => {
+    assert.deepEqual(
+      readInstagramShortToken({ data: [{ access_token: "short", user_id: "1789", permissions: "instagram_business_basic" }] }),
+      { accessToken: "short", userId: "1789" },
+    );
+    assert.equal(readInstagramShortToken({ access_token: "short" }), null);
+    assert.equal(instagramAccountEligible("BUSINESS"), true);
+    assert.equal(instagramAccountEligible("MEDIA_CREATOR"), true);
+    assert.equal(instagramAccountEligible("PERSONAL"), false);
   });
 });
