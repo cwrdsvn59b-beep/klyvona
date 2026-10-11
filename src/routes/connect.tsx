@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
+import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "@/lib/oauth/connect-buttons";
 
 export const Route = createFileRoute("/connect")({
   head: () => ({ meta: [{ title: "חיבור Meta · KLYVONA Connect" }] }),
@@ -26,6 +27,8 @@ function ConnectPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const pendingRef = useRef<ConnectPlatform | null>(null);
+  const [pending, setPending] = useState<ConnectPlatform | null>(null);
 
   useEffect(() => {
     const raw = sessionStorage.getItem("klyvona-onboarding-receipt");
@@ -53,21 +56,27 @@ function ConnectPage() {
     return { response, body };
   }
 
-  async function start(platform: "facebook" | "instagram") {
-    setBusy(true);
+  async function start(platform: ConnectPlatform) {
+    if (!claimOAuthStart(pendingRef.current, platform)) return;
+    pendingRef.current = platform;
+    setPending(platform);
     setMessage("");
-    const result = await post(`/api/oauth/${platform}/start`);
-    setBusy(false);
-    if (!result) return;
-    if (result.response.status === 503) {
-      setMessage("החיבור עדיין ממתין להגדרה בשרת. לא נוצר חיבור מדומה.");
-      return;
+    try {
+      const result = await post(`/api/oauth/${platform}/start`);
+      if (!result) return;
+      if (result.response.status === 503) {
+        setMessage("החיבור עדיין ממתין להגדרה בשרת. לא נוצר חיבור מדומה.");
+        return;
+      }
+      if (!result.response.ok || !result.body.authorizeUrl) {
+        setMessage("לא ניתן לפתוח את Meta. בדקו שהפנייה נשמרה בדפדפן הזה.");
+        return;
+      }
+      window.location.assign(result.body.authorizeUrl);
+    } finally {
+      pendingRef.current = null;
+      setPending(null);
     }
-    if (!result.response.ok || !result.body.authorizeUrl) {
-      setMessage("לא ניתן לפתוח את Meta. בדקו שהפנייה נשמרה בדפדפן הזה.");
-      return;
-    }
-    window.location.assign(result.body.authorizeUrl);
   }
 
   async function load() {
@@ -116,10 +125,18 @@ function ConnectPage() {
         <p className="mt-6 text-sm">המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.</p>
       ) : (
         <div className="mt-6 grid gap-3">
-          <Button disabled={busy} onClick={() => start("facebook")}>
+          <Button
+            disabled={oauthButtonBusy(pending, "facebook")}
+            aria-busy={oauthButtonBusy(pending, "facebook")}
+            onClick={() => start("facebook")}
+          >
             התחברות עם Facebook
           </Button>
-          <Button disabled={busy} onClick={() => start("instagram")}>
+          <Button
+            disabled={oauthButtonBusy(pending, "instagram")}
+            aria-busy={oauthButtonBusy(pending, "instagram")}
+            onClick={() => start("instagram")}
+          >
             התחברות עם Instagram
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => load()}>
