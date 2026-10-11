@@ -254,3 +254,25 @@ Facebook по-прежнему читает только `META_APP_ID` и `META_
 
 Миграции, схема таблиц, `src/lib/crypto/tokens.server.ts`, сценарии Make, TikTok и обмен кода Facebook. Redirect URI остался прежним.
 
+## 12. Проверка перед публикацией Instagram Login, 11 октября 2026, около 19:30 UTC
+
+Код в этой проверке не менялся. Сайт заново не публиковался. Реальная авторизация не запускалась. Значения секретов не читались и в этот файл не входят.
+
+Опубликованный экран подключения уже отдаёт сборку с отдельной кнопкой Instagram. Файл `connect-Ds_0eZg1.js` на https://spring-orbit-honey-baker.grok.me совпал байт в байт с локальной сборкой коммита `32d2632`: 4965 байт, SHA-256 начинается с `e8cd6309a12f6800`. Время файла: 11 октября 2026, 19:29:47 GMT.
+
+| Проверка | Результат | Доказательство |
+|---|---|---|
+| `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET` видны серверу | **PASS** | `POST /api/oauth/instagram/start` с несуществующим клиентом вернул HTTP 401, не 503 |
+| Instagram не использует `META_APP_ID` и `META_APP_SECRET` | **PASS** | В коде Instagram читает только `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`. Facebook по-прежнему читает `META_APP_ID` и `META_APP_SECRET` и на тот же запрос тоже вернул HTTP 401 |
+| Redirect URI | **Частично** | Callback `https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback` без кода вернул HTTP 303 на `/connect?error=state`. Код собирает `{META_OAUTH_REDIRECT_ORIGIN}/api/oauth/instagram/callback`. Текст origin сервер не возвращает |
+| Разрешения `instagram_business_basic` и `instagram_business_content_publish` | **PASS** в коде | Живой адрес авторизации не запрашивался |
+| Facebook, TikTok, PostgreSQL и Make | **Не менялись** | TikTok по-прежнему HTTP 503 и `oauthActivated: false` |
+
+HTTP 401 на старте Instagram означает, что проверка конфигурации прошла: обе переменные Instagram непусты, `TOKEN_ENCRYPTION_KEY` пригоден и задан публичный origin. Если бы `INSTAGRAM_APP_ID` или `INSTAGRAM_APP_SECRET` отсутствовали, новый код вернул бы HTTP 503.
+
+Для Meta остаётся тот же адрес:
+
+`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
+
+Секрет `META_OAUTH_REDIRECT_ORIGIN` должен быть ровно `https://spring-orbit-honey-baker.grok.me`, без пути и без завершающего слэша. Совпадение сохранённого текста с этим адресом снаружи не подтверждено.
+
