@@ -125,3 +125,49 @@ Origin в проде берётся из `META_OAUTH_REDIRECT_ORIGIN` или `BE
 В Publish > Secrets доказанно отсутствующих боевых значений нет. `DATABASE_URL` и `BETTER_AUTH_URL` должен подставить Grok, их не вводят вручную. `KLYVONA_ADMIN_EMAILS` платформа не задаёт: если строки нет, её добавляют вручную, но сейчас нельзя подтвердить, есть она или нет. `VITE_NEON_AUTH_URL` и `NEON_AUTH_BASE_URL` код не читает и PostgreSQL ими не подключается.
 
 Код приложения в этом коммите не менялся относительно `a219837`.
+
+## 9. Instagram OAuth, 11 октября 2026, около 19:10 UTC
+
+Код приложения по-прежнему не менялся относительно `a219837`. Секреты в этот файл не входят. Сайт этим коммитом не публикуется.
+
+После отдельной проверки администратором боевая база ответила, что это сетевой PostgreSQL и что миграция `0003_meta_oauth.sql` записана. Временный маршрут диагностики после этого удалён и в репозиторий не входит.
+
+### Опубликованный сайт
+
+`POST /api/oauth/instagram/start` с несуществующим клиентом вернул HTTP 401. `GET /api/oauth/instagram/callback` без кода вернул HTTP 303 на `/connect?error=state`. Прежний HTTP 503 из-за пустой конфигурации исчез. Обмен authorization code не запускался.
+
+Сервер принимает конфигурацию только если непусты `META_APP_ID` и `META_APP_SECRET`, `TOKEN_ENCRYPTION_KEY` декодируется в 32 байта и задан `META_OAUTH_REDIRECT_ORIGIN` либо `BETTER_AUTH_URL`. Значения переменных не читались. Повторная публикация для уже применённых Secrets не требовалась.
+
+`TOKEN_ENCRYPTION_KEY` — это base64 ровно 32 байт, ключ AES-256-GCM. Hex и обычная строка не подходят. Проверка стоит в `encryptionKeyReady` до старта OAuth.
+
+Redirect URI текущего кода:
+
+`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
+
+Совпадение этого адреса с кабинетом Meta снаружи не подтверждено: сервер не возвращает сохранённый origin.
+
+### Это Facebook Login, не Instagram Login
+
+Instagram и Facebook идут в `https://www.facebook.com/v26.0/dialog/oauth` и `https://graph.facebook.com/v26.0/oauth/access_token`. Разрешения: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`. Аккаунт Instagram ищется только как профессиональный аккаунт страницы Facebook.
+
+В коде нет `https://www.instagram.com/oauth/authorize`, `https://api.instagram.com/oauth/access_token` и разрешений `instagram_business_basic`, `instagram_business_content_publish`. Настроенный в Meta продукт Instagram API with Instagram Login опубликованному приложению не соответствует.
+
+### Безопасный переход только Instagram
+
+Таблицы `oauth_states`, `oauth_pending_accounts` и `social_accounts`, шифрование AES-GCM, секрет клиента и сценарии Make можно сохранить. Новую миграцию делать не нужно. Нельзя лишь подменить адрес в общем потоке Facebook.
+
+Нужно отдельно для `instagram`:
+
+- авторизация на `https://www.instagram.com/oauth/authorize`;
+- обмен кода через `POST https://api.instagram.com/oauth/access_token`;
+- длинный токен через `https://graph.instagram.com/access_token` и `grant_type=ig_exchange_token`;
+- профиль через `https://graph.instagram.com/me`;
+- разрешения `instagram_business_basic` и `instagram_business_content_publish`;
+- одна ожидающая запись без токена страницы;
+- продление через `ig_refresh_token`;
+- отдельная кнопка Instagram на экране подключения.
+
+`META_APP_ID` и `META_APP_SECRET` подходят для Instagram Login, только если это Instagram App ID и Instagram App Secret из кабинета. Если они отличаются от учётных данных Facebook, их нельзя перезаписывать: Facebook Login использует те же имена. Тогда для Instagram нужны отдельные переменные.
+
+Токен в webhook Make по-прежнему не отправляется.
+
