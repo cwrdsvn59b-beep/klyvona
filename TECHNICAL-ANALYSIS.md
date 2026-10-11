@@ -276,3 +276,51 @@ HTTP 401 на старте Instagram означает, что проверка �
 
 Секрет `META_OAUTH_REDIRECT_ORIGIN` должен быть ровно `https://spring-orbit-honey-baker.grok.me`, без пути и без завершающего слэша. Совпадение сохранённого текста с этим адресом снаружи не подтверждено.
 
+## 13. Этап A: кнопки, ошибки OAuth и мобильные устройства
+
+Дата: 11 октября 2026, около 20:02 UTC. Код приложения не менялся. Сайт не публиковался. Секреты не читались и здесь не записаны. Настоящий iPhone и Android не проверялись.
+
+### Одновременные кнопки
+
+В `src/routes/connect.tsx` у Facebook и Instagram разные вызовы: `start("facebook")` и `start("instagram")`. Общего обработчика, вложенных кнопок и наложения из-за RTL нет. Кнопки соседние, высота 48px.
+
+Один флаг `busy` одновременно отключает обе кнопки. Поэтому визуально срабатывают обе. Два запроса из одного нажатия кодом не подтверждены. Повторный тап до перерисовки возможен: `disabled` появляется только после отрисовки.
+
+На шаге онбординга в `src/components/onboarding-wizard.tsx` обе кнопки выключены и подписаны «בקרוב». Они не запускают OAuth.
+
+### Instagram
+
+Сервер собирает `https://www.instagram.com/oauth/authorize` с параметрами `client_id`, `redirect_uri`, `response_type=code`, `scope=instagram_business_basic,instagram_business_content_publish` и `state`. `client_secret` в адрес не входит. Обмен кода идёт на `https://api.instagram.com/oauth/access_token`. Используются только `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`.
+
+`window.location.assign` открывает этот адрес напрямую. На iPhone установленное приложение Instagram перехватывает `www.instagram.com` и показывает “Something went wrong” до callback. Ошибка на английском внутри Instagram, а callback KLYVONA показывает иврит. Поэтому запрос до callback не доходит.
+
+State хранится в PostgreSQL и привязан к клиенту. Cookie `klyvona_ig_oauth` и заявка в `sessionStorage` принадлежат исходному браузеру. Возврат через другое приложение может дать `csrf` или пустой экран. Это подтверждено кодом, на устройстве не проверено.
+
+### Facebook
+
+Отдельный поток: `https://www.facebook.com/v26.0/dialog/oauth` и callback `/api/oauth/facebook/callback`. Секреты только `META_APP_ID` и `META_APP_SECRET`. Потоки не объединены.
+
+В Meta ранее регистрировался Instagram callback. Отсутствие `https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback` в продукте Facebook Login остаётся гипотезой. Перехват приложением Facebook на телефоне — тот же механизм, что у Instagram.
+
+Тексты ошибок в `connect.tsx` называют обе сети “Meta”.
+
+### Админка
+
+`src/lib/integrations/health.server.ts` всегда ставит социальным сетям `awaiting_setup`, даже когда ключи найдены. Это не причина сбоя OAuth.
+
+### Что менять позже
+
+- `src/routes/connect.tsx`
+- `src/lib/oauth/instagram.server.ts`
+- `src/lib/oauth/meta.server.ts`
+- `src/components/onboarding-wizard.tsx`
+- `src/lib/integrations/health.server.ts`
+- `src/routes/admin/index.tsx`
+- `src/lib/oauth/meta-guards.test.ts`
+
+Схему PostgreSQL, Make, TikTok, шифрование и Secrets не менять.
+
+Порядок исправления: раздельные состояния кнопок, запуск официального OAuth без отдачи адреса приложению социальной сети, отдельные тексты ошибок, затем правдивый статус в админке.
+
+Автоматически можно проверить нажатия, повторный тап, состав URL, state и ширину RTL. Вход тестовым аккаунтом нужен на настоящих iPhone, Android и компьютере.
+
