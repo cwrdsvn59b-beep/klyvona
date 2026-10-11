@@ -431,3 +431,55 @@ POST `{}` на `https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/star
 
 Опубликовать локальное исправление и сохранить `META_FACEBOOK_CONFIG_ID` в Publish, Secrets. После этого один ручной запуск кнопки не меняет поток Instagram. До публикации кнопка на живом сайте может снова открыть старый адрес со `scope`.
 
+## 17. Исправление Facebook Login for Business, 12 октября 2026
+
+Это отчёт по коммиту `51b4896`, а не замена исходников. Сайт `spring-orbit-honey-baker.grok.me` этим коммитом не публикуется. Значение `META_FACEBOOK_CONFIG_ID` в репозиторий не входит. Реальная авторизация Facebook не запускалась.
+
+### FIXED
+
+Изменены рабочие файлы, не только этот отчёт:
+
+- `src/lib/oauth/meta.server.ts`
+- `src/lib/oauth/meta-guards.ts`
+- `src/lib/oauth/providers.ts`
+- `src/lib/oauth/meta-guards.test.ts`
+
+`src/lib/oauth/instagram.server.ts` не изменялся.
+
+### DIFF
+
+`startMetaOAuth` читает `process.env.META_FACEBOOK_CONFIG_ID`. Пустое значение даёт HTTP 503, state не создаётся и старый адрес со `scope` не открывается.
+
+Иначе `facebookAuthorizeUrl` собирает `https://www.facebook.com/v26.0/dialog/oauth` с параметрами:
+
+- `client_id` из `META_APP_ID`;
+- `config_id` из `META_FACEBOOK_CONFIG_ID`;
+- `redirect_uri` = `{META_OAUTH_REDIRECT_ORIGIN}/api/oauth/facebook/callback`;
+- `state`;
+- `response_type=code`;
+- `override_default_response_type=true`.
+
+Параметра `scope` в адресе нет. Разрешения берутся из конфигурации Facebook Login for Business. Callback, обмен authorization code, проверка state и шифрование токена не менялись. В каталоге провайдеров у Facebook больше не перечислены старые разрешения Instagram.
+
+### BUILD
+
+- `npx tsc --noEmit`: PASS
+- тесты OAuth, state и кнопок: PASS, 30 из 30
+- `npm run build`: PASS
+
+### COMMIT
+
+`51b4896aa8408ebba043faba583faf3c927ddc80` в `main`.
+
+### DEPLOY
+
+NO. Публикация на рабочий сайт из этой среды недоступна. Локальная сборка не является опубликованной версией.
+
+### INSTAGRAM
+
+Код Instagram Login не входил в коммит `51b4896`. Адрес `https://www.instagram.com/oauth/authorize` и разрешения `instagram_business_basic`, `instagram_business_content_publish` сохранены.
+
+### FACEBOOK
+
+NO для кнопки на текущем опубликованном сайте. После Update в Grok, если `META_FACEBOOK_CONFIG_ID` уже сохранён в Secrets, один ручной тест допустим. До Update живой сайт может по-прежнему открывать старый адрес.
+
