@@ -1,14 +1,16 @@
-# KLYVONA — план сохранения разрешений Instagram OAuth
+# Проверка коммита ec837ad
 
-Коммит исходников на момент плана: [`2ef31e8`](https://github.com/cwrdsvn59b-beep/klyvona/commit/2ef31e88afc362384ba8dbcc2adfb4be080f8894)
+Код: [`ec837ad`](https://github.com/cwrdsvn59b-beep/klyvona/commit/ec837ad513c75ba92aeecfbe42516941a4a3a957)
 
-Дата: 2026-10-12
+Дата проверки: 2026-10-12
 
-Это этап 1. Файлы приложения этим коммитом не меняются. Коммита с исправлением OAuth, deployment и переподключения Instagram нет.
+Файлы коммита сверены с рабочей копией. Во время проверки код, база, секреты и Meta API не изменялись. Deployment не выполнялся.
 
-## Что подтверждено
+## Технология
 
-Официальный обмен кода Instagram Login, `POST https://api.instagram.com/oauth/access_token`, возвращает `permissions` строкой через запятую внутри `data[0]`:
+Стек приложения не менялся: TanStack Start, серверный Instagram Login, AES-256-GCM и Neon PostgreSQL.
+
+Instagram Login возвращает фактически выданные права только при обмене authorization code. Документация доступна: [Business Login for Instagram](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login). Поле `permissions` — строка через запятую внутри `data[0]`:
 
 ```json
 {
@@ -16,29 +18,76 @@
     {
       "access_token": "...",
       "user_id": "1020...",
-      "permissions": "instagram_business_basic,instagram_business_content_publish"
+      "permissions": "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish"
     }
   ]
 }
 ```
 
-Источник: [Business Login for Instagram](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login). Долгоживущий обмен и refresh этого поля не возвращают.
+Долгоживущий обмен и refresh это поле не возвращают.
 
-В коде `readInstagramShortToken()` оставляет только `access_token` и `user_id` (`src/lib/oauth/meta-guards.ts:150`). Зашифрованный payload v2 — `{ userToken, igUserId, username? }` (`src/lib/oauth/instagram-renew.ts:1`). Статус «Ready for testing» в панели Meta из репозитория не виден.
+Разбор в `src/lib/oauth/meta-guards.ts` принимает только такую строку:
 
-## Что нельзя проверить без нового входа
+- `permissions_confirmed` — в строке есть `instagram_business_content_publish`;
+- `permissions_missing` — строка разобрана, но права публикации в ней нет;
+- `permissions_unknown` — поля нет, это массив или формат не совпадает с документацией.
 
-Уже сохранённый токен @klyvona_business поля `permissions` не содержит. Этот код сам его не допишет: список появится только при следующем OAuth после внедрения. Отсутствие поля у старого токена будет `permissions_unknown`, не отказом и не `reconnect`.
+Нормализованный список и источник (`oauth_exchange` или `preserved_on_refresh`) пишутся только в зашифрованный payload версии v2. Старый payload без этих полей остаётся `permissions_unknown` и не требует reconnect. Refresh копирует сохранённый список и помечает источник `preserved_on_refresh`. Это не новая проверка Meta.
 
-## План после подтверждения
+`/api/oauth/instagram/permissions` отдаёт в браузер только статусы: `grantAtConnection`, `grantSource` и `liveRecheck: "not_performed"`. Токен и сырой список прав в ответ не входят. Историческая запись не превращается в онлайн-статус `permission_confirmed`.
 
-1. `src/lib/oauth/meta-guards.ts` — разбор только строки `permissions`. Полный список с `instagram_business_content_publish` даёт `permissions_confirmed`. Строка есть, но права публикации нет — `permissions_missing`. Поля нет, это массив или иной формат — `permissions_unknown`.
-2. `src/lib/oauth/instagram-renew.ts` и `src/lib/oauth/instagram.server.ts` — сохранять этот статус и нормализованный список только внутри AES-GCM payload. Версия остаётся v2. Refresh копирует старый список, потому что Meta его заново не присылает.
-3. Проверка `/api/oauth/instagram/permissions` читает сохранённый результат и отдельно сообщает, что онлайн-повторной проверки не было. Историческая запись не становится `permission_confirmed`.
-4. `src/routes/connect.tsx` и `src/lib/oauth/connect-session.ts` — иврит, RTL: «выдано при подключении» и «сейчас повторно не проверялось». В браузер уходят только статусы, не токен и не сырой список.
+Изменённые файлы коммита `ec837ad`:
 
-Не меняются redirect URI, названия scope, проверка Instagram ID, Make, Facebook, регистрация, тарифы и админка. `media_publish` не добавляется.
+- `src/lib/oauth/meta-guards.ts`
+- `src/lib/oauth/meta-guards.test.ts`
+- `src/lib/oauth/instagram-renew.ts`
+- `src/lib/oauth/instagram-renew.test.ts`
+- `src/lib/oauth/instagram.server.ts`
+- `src/lib/oauth/instagram-permissions.integration.test.ts`
+- `src/lib/oauth/connect-session.ts`
+- `src/routes/connect.tsx`
 
-## Запланированные проверки
+Redirect URI и запрашиваемые scope не менялись. Make, Facebook, тарифы и данные клиентов не затрагивались.
 
-Тесты после подтверждения, только локально: полный список, отсутствие права публикации, отсутствие поля, повреждённый формат, старый v2, шифрование, отсутствие токена в ответе, текст статуса. Затем `npm run typecheck`, `npm run lint`, узкие тесты, `npm test` и `npm run build:check`. Боевые токены, Meta API и `npm run build` не используются.
+## Результаты проверки
+
+| Команда | Код выхода | Результат |
+|---|---|---|
+| `npm run typecheck` | 0 | Ошибок TypeScript нет |
+| `npm run lint` | 0 | Замечаний ESLint нет |
+| Целевые тесты Instagram | 0 | 36 из 36 прошли, 0 упали |
+| `npm test` | 1 | 195 прошли, 13 упали |
+| `npm run build:check` | 0 | Сборка завершилась. Миграция не запускалась |
+
+Целевая команда:
+
+```bash
+node --experimental-strip-types --import ./scripts/register-alias.mjs --test \
+  src/lib/oauth/meta-guards.test.ts \
+  src/lib/oauth/instagram-renew.test.ts \
+  src/lib/oauth/instagram-permissions.integration.test.ts \
+  src/lib/oauth/instagram-identity.integration.test.ts \
+  src/lib/oauth/instagram-verify.integration.test.ts
+```
+
+`npm test` запускает `scripts/**/*.test.mjs` и из-за `&&` не доходит до тестов `src/`, когда шаблонные проверки падают. Упавшие 13 проверок не относятся к Instagram:
+
+- the build side resolves the template's shipped app-env
+- platform chrome overwrites share-card metas and always sets og:title
+- published grok.me slug is still a title fallback
+- emits og:image for a public host and prefers a custom card
+- placeholder og:image appends site.color when it is 6-digit hex
+- document title entities are not double-escaped on og:title
+- injects into documents with no head element
+- streaming injector matches `</HEAD>` case-insensitively
+- uses the app name in the injected title tag
+- the auth schema ships outside the globbed directory
+- the template ships auth off
+- the wrapped command runs with the app env applied
+- the CLI still runs when invoked through a symlinked path
+
+`build:check` выводит предупреждения Rolldown о директиве `"use client"` в `@tanstack/react-router`. Код выхода при этом 0.
+
+## Ограничение
+
+Текущий токен @klyvona_business не содержит сохранённый список прав. До следующего входа после публикации `ec837ad` проверка покажет `permissions_unknown`. Даже `permissions_confirmed` означает только ответ Meta в момент подключения, а не повторную онлайн-проверку.
