@@ -18,6 +18,7 @@ import { Route as AdminClientsClientIdRouteImport } from './routes/admin/clients
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiOauthProviderCallbackRouteImport } from './routes/api/oauth/$provider/callback'
 import { Route as ApiOauthProviderStartRouteImport } from './routes/api/oauth/$provider/start'
+import { Route as ApiOauthInstagramPermissionsRouteImport } from './routes/api/oauth/instagram/permissions'
 import { Route as ApiOauthInstagramRenewRouteImport } from './routes/api/oauth/instagram/renew'
 import { Route as ApiOauthInstagramVerifyRouteImport } from './routes/api/oauth/instagram/verify'
 import { Route as ApiOauthMetaAccountsRouteImport } from './routes/api/oauth/meta/accounts'
@@ -71,6 +72,12 @@ const ApiOauthProviderStartRoute = ApiOauthProviderStartRouteImport.update({
   path: '/api/oauth/$provider/start',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiOauthInstagramPermissionsRoute =
+  ApiOauthInstagramPermissionsRouteImport.update({
+    id: '/api/oauth/instagram/permissions',
+    path: '/api/oauth/instagram/permissions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiOauthInstagramRenewRoute = ApiOauthInstagramRenewRouteImport.update({
   id: '/api/oauth/instagram/renew',
   path: '/api/oauth/instagram/renew',
@@ -112,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/instagram/permissions': typeof ApiOauthInstagramPermissionsRoute
   '/api/oauth/instagram/renew': typeof ApiOauthInstagramRenewRoute
   '/api/oauth/instagram/verify': typeof ApiOauthInstagramVerifyRoute
   '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
@@ -128,6 +136,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/instagram/permissions': typeof ApiOauthInstagramPermissionsRoute
   '/api/oauth/instagram/renew': typeof ApiOauthInstagramRenewRoute
   '/api/oauth/instagram/verify': typeof ApiOauthInstagramVerifyRoute
   '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
@@ -146,6 +155,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/instagram/permissions': typeof ApiOauthInstagramPermissionsRoute
   '/api/oauth/instagram/renew': typeof ApiOauthInstagramRenewRoute
   '/api/oauth/instagram/verify': typeof ApiOauthInstagramVerifyRoute
   '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/instagram/permissions'
     | '/api/oauth/instagram/renew'
     | '/api/oauth/instagram/verify'
     | '/api/oauth/meta/accounts'
@@ -181,6 +192,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/instagram/permissions'
     | '/api/oauth/instagram/renew'
     | '/api/oauth/instagram/verify'
     | '/api/oauth/meta/accounts'
@@ -198,6 +210,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/instagram/permissions'
     | '/api/oauth/instagram/renew'
     | '/api/oauth/instagram/verify'
     | '/api/oauth/meta/accounts'
@@ -214,6 +227,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiOauthProviderCallbackRoute: typeof ApiOauthProviderCallbackRoute
   ApiOauthProviderStartRoute: typeof ApiOauthProviderStartRoute
+  ApiOauthInstagramPermissionsRoute: typeof ApiOauthInstagramPermissionsRoute
   ApiOauthInstagramRenewRoute: typeof ApiOauthInstagramRenewRoute
   ApiOauthInstagramVerifyRoute: typeof ApiOauthInstagramVerifyRoute
   ApiOauthMetaAccountsRoute: typeof ApiOauthMetaAccountsRoute
@@ -287,6 +301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOauthProviderStartRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/oauth/instagram/permissions': {
+      id: '/api/oauth/instagram/permissions'
+      path: '/api/oauth/instagram/permissions'
+      fullPath: '/api/oauth/instagram/permissions'
+      preLoaderRoute: typeof ApiOauthInstagramPermissionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/oauth/instagram/renew': {
       id: '/api/oauth/instagram/renew'
       path: '/api/oauth/instagram/renew'
@@ -354,6 +375,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiOauthProviderCallbackRoute: ApiOauthProviderCallbackRoute,
   ApiOauthProviderStartRoute: ApiOauthProviderStartRoute,
+  ApiOauthInstagramPermissionsRoute: ApiOauthInstagramPermissionsRoute,
   ApiOauthInstagramRenewRoute: ApiOauthInstagramRenewRoute,
   ApiOauthInstagramVerifyRoute: ApiOauthInstagramVerifyRoute,
   ApiOauthMetaAccountsRoute: ApiOauthMetaAccountsRoute,

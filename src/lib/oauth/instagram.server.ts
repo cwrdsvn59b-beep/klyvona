@@ -16,6 +16,7 @@ import {
   instagramConfigProblem,
   instagramConnectReturn,
   instagramUsername,
+  instagramPermissionVerdict,
   instagramVerifyVerdict,
   preserveInstagramIds,
   readInstagramProfile,
@@ -41,6 +42,9 @@ export type InstagramGraph = {
   }): Promise<{ accessToken: string; expiresIn: number | null }>;
   refresh(token: string): Promise<{ accessToken: string; expiresIn: number | null }>;
   profile(token: string): Promise<{ username: string; accountType: string | null; userId: string | null; appScopedId: string | null }>;
+  grantedPermissions?(token: string): Promise<
+    { documented: false; reviewRequired?: boolean } | { documented: true; granted: string[]; reviewRequired?: boolean }
+  >;
 };
 
 function appCredentials() {
@@ -165,6 +169,13 @@ export const liveInstagramGraph: InstagramGraph = {
     const kind = instagramFailureKind(response.status, body);
     if (kind) throw new InstagramRequestError(kind);
     return readInstagramProfile(body);
+  },
+  async grantedPermissions(token) {
+    // Business Login documents the granted scope list only on the short-lived
+    // code exchange. The long-lived token and /me do not return it, and
+    // debug_token is not documented for this token family. No media call.
+    void token;
+    return { documented: false };
   },
 };
 
@@ -423,6 +434,80 @@ export async function verifyInstagramIdentity(
     console.error("[instagram] verify failed", failure);
     return noStore({ ...instagramVerifyVerdict({ storedId, tokenReadable: true, failure, profile: null, appIds }), persist: false });
   }
+}
+
+/** Read-only publish-permission check. Never writes the database or creates media. */
+export async function checkInstagramPublishPermission(
+  request: Request,
+  graph: InstagramGraph = liveInstagramGraph,
+  sql?: Sql,
+): Promise<Response> {
+  if (instagramConfigProblem()) return disabled();
+  const db = sql ?? (await getSql());
+  const parsed = await readConnectBody(request, db);
+  if (!parsed) return noStore({ error: "unauthorized" }, 401);
+  const rows = await db<{ external_account_id: string | null; token_ciphertext: string | null; status: string }>`
+    select external_account_id, token_ciphertext, status from social_accounts
+    where client_id = ${parsed.client.id} and platform = ${"instagram"} limit 1
+  `;
+  const before = rows[0];
+  const storedId = before?.external_account_id ?? "";
+  const appIds = configuredAppIds();
+  const checkedAt = new Date().toISOString();
+  const finish = (
+    identity: ReturnType<typeof instagramVerifyVerdict>,
+    permissions: { documented: false; reviewRequired?: boolean } | { documented: true; granted: string[]; reviewRequired?: boolean } | null,
+    failure: "none" | "auth" | "temporary",
+  ) =>
+    noStore({
+      identity: identity.check,
+      identityConfirmed: identity.identityConfirmed,
+      username: identity.username,
+      ...instagramPermissionVerdict({ identityConfirmed: identity.identityConfirmed, failure, permissions }),
+      checkedAt,
+      persist: false,
+    });
+
+  if (!before?.token_ciphertext) {
+    const identity = instagramVerifyVerdict({ storedId, tokenReadable: false, failure: "none", profile: null, appIds });
+    return finish(identity, null, "auth");
+  }
+  let token = "";
+  try {
+    const saved = JSON.parse(await openSecret(before.token_ciphertext)) as { userToken?: unknown };
+    token = typeof saved.userToken === "string" ? saved.userToken : "";
+  } catch {
+    token = "";
+  }
+  if (!token) {
+    const identity = instagramVerifyVerdict({ storedId, tokenReadable: false, failure: "none", profile: null, appIds });
+    return finish(identity, null, "auth");
+  }
+  let failure: "none" | "auth" | "temporary" = "none";
+  let profile: Awaited<ReturnType<InstagramGraph["profile"]>> | null = null;
+  try {
+    profile = await graph.profile(token);
+  } catch (error) {
+    failure = error instanceof InstagramRequestError && error.kind === "auth" ? "auth" : "temporary";
+    console.error("[instagram] permission check failed", failure);
+  }
+  const identity = instagramVerifyVerdict({
+    storedId,
+    tokenReadable: true,
+    failure,
+    profile,
+    appIds,
+  });
+  if (failure !== "none") return finish(identity, null, failure);
+  let permissions: { documented: false; reviewRequired?: boolean } | { documented: true; granted: string[]; reviewRequired?: boolean } | null = null;
+  try {
+    permissions = graph.grantedPermissions ? await graph.grantedPermissions(token) : { documented: false };
+  } catch (error) {
+    const permissionFailure = error instanceof InstagramRequestError && error.kind === "auth" ? "auth" : "temporary";
+    console.error("[instagram] permission check failed", permissionFailure);
+    return finish(identity, null, permissionFailure);
+  }
+  return finish(identity, permissions, "none");
 }
 
 export async function renewInstagram(request: Request, graph: InstagramGraph = liveInstagramGraph): Promise<Response> {

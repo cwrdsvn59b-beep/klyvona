@@ -157,7 +157,7 @@ export async function readConnectBody(
   }
 }
 
-export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect" | "verify";
+export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect" | "verify" | "permissions";
 export type ConnectNoticeTone = "error" | "ok" | "info";
 
 export function connectNoticeClass(tone: ConnectNoticeTone): string {
@@ -183,6 +183,9 @@ export function connectResultAccepted(result: ConnectCall, action: ConnectAction
   if (action === "verify") {
     return body.publishingAllowed === false && body.publishing === "not_verified" && typeof body.check === "string";
   }
+  if (action === "permissions") {
+    return body.publishingTested === false && body.contentCreated === false && body.persist === false && typeof body.permission === "string" && typeof body.checkedAt === "string";
+  }
   return body.ok === true;
 }
 
@@ -201,6 +204,28 @@ export function instagramVerifyText(body: Record<string, unknown>): { message: s
   const named = username && body.check === "identity_confirmed" ? `${found.message} @${username}` : found.message;
   if (body.check === "identity_confirmed") return { message: `${named} הפרסום עדיין לא אושר.`, tone: "ok" };
   return { message: named, tone: found.tone };
+}
+
+const PERMISSION_TEXT: Record<string, { message: string; tone: ConnectNoticeTone }> = {
+  permission_confirmed: { message: "הרשאת הפרסום אושרה. לא פורסם תוכן.", tone: "ok" },
+  permission_missing: { message: "הרשאת הפרסום לא ניתנה.", tone: "error" },
+  verification_unavailable: { message: "לא ניתן לאשר את הרשאת הפרסום בבדיקה בטוחה.", tone: "info" },
+  app_review_required: { message: "נדרשת גישת Meta מתקדמת לפני פרסום לחשבונות של לקוחות.", tone: "info" },
+  temporary_error: { message: "שגיאה זמנית בבדיקה.", tone: "info" },
+};
+
+export function instagramPermissionText(body: Record<string, unknown>): {
+  message: string;
+  identityLabel: string;
+  tone: ConnectNoticeTone;
+} {
+  if (body.identity === "reconnect") return { message: "נדרשת הרשאה מחדש.", identityLabel: "נדרשת הרשאה מחדש", tone: "error" };
+  if (body.identity === "identity_mismatch") {
+    return { message: "מזהה Instagram אינו תואם למזהה שנשמר.", identityLabel: "המזהה אינו תואם", tone: "error" };
+  }
+  const found = PERMISSION_TEXT[typeof body.permission === "string" ? body.permission : ""] ?? PERMISSION_TEXT.verification_unavailable;
+  const identityLabel = body.identityConfirmed === true ? "החשבון אומת" : "החשבון לא אומת";
+  return { message: found.message, identityLabel, tone: found.tone };
 }
 
 export async function callConnect(

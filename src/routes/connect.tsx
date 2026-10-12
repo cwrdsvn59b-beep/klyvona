@@ -12,6 +12,7 @@ import {
   connectResultAccepted,
   connectedFromBody,
   instagramCardText,
+  instagramPermissionText,
   instagramVerifyText,
   instagramConnectLists,
   readConnectReceipt,
@@ -50,6 +51,8 @@ function ConnectPage() {
   const savingRef = useRef(false);
   const [pending, setPending] = useState<ConnectPlatform | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [permissionView, setPermissionView] = useState<{ message: string; identityLabel: string; tone: "error" | "ok" | "info"; checkedAt: string } | null>(null);
 
   function setMessage(text: string, tone: Notice["tone"] = "error") {
     setNotice(text ? { text, tone } : null);
@@ -151,6 +154,33 @@ function ConnectPage() {
     }
   }
 
+  async function checkPublishPermission() {
+    setPermissionBusy(true);
+    try {
+      const result = await post("/api/oauth/instagram/permissions");
+      if (!result || result.networkError) {
+        setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", tone: "info", checkedAt: new Date().toISOString() });
+        return;
+      }
+      if (!connectResultAccepted(result, "permissions")) {
+        setPermissionView({
+          message: result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לאמת את הזהות.",
+          identityLabel: "החשבון לא אומת",
+          tone: "error",
+          checkedAt: new Date().toISOString(),
+        });
+        return;
+      }
+      const text = instagramPermissionText(result.body);
+      const checkedAt = typeof result.body.checkedAt === "string" ? result.body.checkedAt : new Date().toISOString();
+      setPermissionView({ message: text.message, identityLabel: text.identityLabel, tone: text.tone, checkedAt });
+    } catch {
+      setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", tone: "info", checkedAt: new Date().toISOString() });
+    } finally {
+      setPermissionBusy(false);
+    }
+  }
+
   async function choose(id: string) {
     if (savingRef.current) return;
     savingRef.current = true;
@@ -227,6 +257,21 @@ function ConnectPage() {
           <Button variant="secondary" disabled={busy || connected.length === 0} onClick={() => verifyInstagram()}>
             בדיקת חיבור Instagram
           </Button>
+          <Button variant="secondary" disabled={permissionBusy || connected.length === 0} aria-busy={permissionBusy} onClick={() => checkPublishPermission()}>
+            {permissionBusy ? "בודקים הרשאות..." : "בדיקת הרשאות פרסום"}
+          </Button>
+          {permissionView ? (
+            <article className="rounded-2xl bg-surface p-4 shadow-card" aria-live="polite">
+              <p className={connectNoticeClass(permissionView.tone)}>{permissionView.message}</p>
+              <p className="mt-2 text-sm">חשבון: {permissionView.identityLabel}</p>
+              <p className="text-sm">הרשאת פרסום: {permissionView.message}</p>
+              <p className="text-sm">פרסום בפועל: לא נבדק</p>
+              <p className="mt-1 text-sm text-muted">
+                בדיקה אחרונה: {new Date(permissionView.checkedAt).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })}
+              </p>
+              <p className="mt-2 text-sm text-muted">עבור חשבונות של לקוחות אחרים נדרשת גישת Meta מתקדמת ובדיקת האפליקציה לפני פרסום.</p>
+            </article>
+          ) : null}
           {connected.map((item) => {
             const card = instagramCardText(item);
             return (

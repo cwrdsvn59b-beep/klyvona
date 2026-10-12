@@ -315,6 +315,33 @@ export function instagramVerifyVerdict(input: {
   return { ...base, check: "identity_confirmed", username, identityConfirmed: true, tokenSaved: true, accountEligible: true };
 }
 
+export type InstagramPermissionCheck =
+  | "permission_confirmed"
+  | "permission_missing"
+  | "verification_unavailable"
+  | "app_review_required"
+  | "temporary_error";
+
+/**
+ * A granted scope is confirmed only from a documented live permission list.
+ * The authorize URL and a successful /me response are not that list.
+ * Confirming the scope still does not mean a post was published.
+ */
+export function instagramPermissionVerdict(input: {
+  identityConfirmed: boolean;
+  failure: "none" | "auth" | "temporary";
+  permissions: { documented: false; reviewRequired?: boolean } | { documented: true; granted: readonly string[]; reviewRequired?: boolean } | null;
+}): { permission: InstagramPermissionCheck; publishingTested: false; contentCreated: false } {
+  const base = { publishingTested: false as const, contentCreated: false as const };
+  if (input.failure === "temporary") return { ...base, permission: "temporary_error" };
+  if (input.failure === "auth" || !input.identityConfirmed) return { ...base, permission: "verification_unavailable" };
+  if (input.permissions?.reviewRequired) return { ...base, permission: "app_review_required" };
+  if (!input.permissions?.documented) return { ...base, permission: "verification_unavailable" };
+  const granted = new Set(input.permissions.granted);
+  if (granted.has("instagram_business_content_publish")) return { ...base, permission: "permission_confirmed" };
+  return { ...base, permission: "permission_missing" };
+}
+
 export function instagramAccountEligible(accountType: string | null): boolean {
   if (!accountType) return false;
   const value = accountType.toUpperCase();
