@@ -150,7 +150,7 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
 }
 
 export function instagramAccountEligible(accountType: string | null): boolean {
-  if (!accountType) return true;
+  if (!accountType) return false;
   const value = accountType.toUpperCase();
   return value === "BUSINESS" || value === "MEDIA_CREATOR";
 }

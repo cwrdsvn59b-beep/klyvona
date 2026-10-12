@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { sealSecret, openSecret } from "../crypto/tokens.server.ts";
 import {
   INSTAGRAM_SCOPES,
@@ -195,6 +196,45 @@ describe("instagram login", () => {
     assert.equal(instagramAccountEligible("BUSINESS"), true);
     assert.equal(instagramAccountEligible("MEDIA_CREATOR"), true);
     assert.equal(instagramAccountEligible("PERSONAL"), false);
+    assert.equal(instagramAccountEligible(null), false);
+    assert.equal(instagramAccountEligible(""), false);
+    assert.equal(instagramAccountEligible("UNKNOWN"), false);
+  });
+});
+
+describe("instagram account save", () => {
+  it("does not require the Facebook app to list or save an Instagram account", () => {
+    const env = {
+      INSTAGRAM_APP_ID: "ig-app",
+      INSTAGRAM_APP_SECRET: "ig-secret",
+      TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+    } as NodeJS.ProcessEnv;
+    assert.equal(instagramConfigProblem(env), null);
+    assert.match(metaConfigProblem(env) ?? "", /Meta app credentials/);
+    assert.match(
+      instagramConfigProblem({
+        VERCEL_ENV: "production",
+        INSTAGRAM_APP_ID: "ig-app",
+        INSTAGRAM_APP_SECRET: "ig-secret",
+        TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+      }) ?? "",
+      /Production database is not configured/,
+    );
+    const source = readFileSync(new URL("./meta.server.ts", import.meta.url), "utf8");
+    const list = source.slice(source.indexOf("export async function listPendingAccounts"), source.indexOf("export async function selectPendingAccount"));
+    const select = source.slice(source.indexOf("export async function selectPendingAccount"), source.indexOf("export async function disconnectMeta"));
+    assert.match(list, /instagramConfigProblem/);
+    assert.doesNotMatch(list, /metaConfigProblem/);
+    assert.match(list, /platform = 'instagram'/);
+    assert.match(select, /instagramConfigProblem/);
+    assert.doesNotMatch(select, /metaConfigProblem/);
+    assert.match(select, /unsupported_platform/);
+    assert.match(select, /returning platform/);
+    assert.match(select, /missing_social_account/);
+    const failedUpdate = select.indexOf("missing_social_account");
+    const pendingDelete = select.indexOf("delete from oauth_pending_accounts");
+    assert.ok(failedUpdate > 0 && pendingDelete > failedUpdate);
+    assert.doesNotMatch(select, /selectionWriteSucceeded/);
   });
 });
 
