@@ -7,6 +7,8 @@ import {
   accountsFromBody,
   callConnect,
   canConnectInThisBrowser,
+  CONNECT_GATE_TEXT,
+  connectResultAccepted,
   connectedFromBody,
   instagramConnectLists,
   readConnectReceipt,
@@ -85,7 +87,7 @@ function ConnectPage() {
         setMessage("החיבור עדיין ממתין להגדרה בשרת. לא נוצר חיבור מדומה.");
         return;
       }
-      if (!result.ok || typeof result.body.authorizeUrl !== "string") {
+      if (!connectResultAccepted(result) || typeof result.body.authorizeUrl !== "string") {
         setMessage("לא ניתן לפתוח את Instagram. בדקו שהפנייה נשמרה בדפדפן הזה.");
         return;
       }
@@ -104,7 +106,7 @@ function ConnectPage() {
         setMessage("אין חיבור לשרת. נסו שוב.");
         return false;
       }
-      if (!result.ok) {
+      if (!connectResultAccepted(result)) {
         if (!quiet) setMessage(result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לטעון חשבונות.");
         return false;
       }
@@ -122,7 +124,7 @@ function ConnectPage() {
     setBusy(true);
     try {
       const result = await post("/api/oauth/meta/select", { pendingId: id });
-      if (!result || result.networkError || !result.ok) {
+      if (!result || !connectResultAccepted(result)) {
         setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
         return;
       }
@@ -141,7 +143,7 @@ function ConnectPage() {
     setBusy(true);
     try {
       const result = await post(path, { platform });
-      if (!result || result.networkError || !result.ok) {
+      if (!result || !connectResultAccepted(result)) {
         setMessage("הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
         return;
       }
@@ -171,7 +173,7 @@ function ConnectPage() {
       </p>
       {message ? <p className="mt-4 text-sm text-danger">{message}</p> : null}
       {!receipt?.connectSecret ? (
-        <p className="mt-6 text-sm">המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.</p>
+        <p className="mt-6 text-sm">{CONNECT_GATE_TEXT}</p>
       ) : (
         <div className="mt-6 grid gap-3">
           <Button

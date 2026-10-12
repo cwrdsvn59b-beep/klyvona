@@ -18,11 +18,14 @@ export type ListedConnected = {
   externalAccountId: string;
 };
 
+export const CONNECT_GATE_TEXT = "המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.";
+
 export type ConnectCall = {
   ok: boolean;
   status: number;
   body: Record<string, unknown>;
   networkError: boolean;
+  invalidBody: boolean;
 };
 
 /** A browser can open connect only after onboarding saved a receipt in that same browser. */
@@ -98,20 +101,28 @@ export function connectedFromBody(body: Record<string, unknown>): ListedConnecte
   });
 }
 
-export async function readConnectBody(response: { text(): Promise<string> }): Promise<Record<string, unknown>> {
+export async function readConnectBody(
+  response: { text(): Promise<string> },
+): Promise<{ body: Record<string, unknown>; invalidBody: boolean }> {
   let text = "";
   try {
     text = await response.text();
   } catch {
-    return {};
+    return { body: {}, invalidBody: true };
   }
-  if (!text.trim()) return {};
+  if (!text.trim()) return { body: {}, invalidBody: true };
   try {
     const value = JSON.parse(text) as unknown;
-    return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return { body: {}, invalidBody: true };
+    return { body: value as Record<string, unknown>, invalidBody: false };
   } catch {
-    return {};
+    return { body: {}, invalidBody: true };
   }
+}
+
+/** HTTP 200 with a non-JSON body is not a completed connect action. */
+export function connectResultAccepted(result: ConnectCall): boolean {
+  return result.ok && !result.networkError && !result.invalidBody;
 }
 
 export async function callConnect(
@@ -126,13 +137,15 @@ export async function callConnect(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ reference: receipt.reference, connectSecret: receipt.connectSecret, ...extra }),
     });
+    const parsed = await readConnectBody(response);
     return {
-      ok: response.ok,
+      ok: response.ok && !parsed.invalidBody,
       status: response.status,
-      body: await readConnectBody(response),
+      body: parsed.body,
       networkError: false,
+      invalidBody: parsed.invalidBody,
     };
   } catch {
-    return { ok: false, status: 0, body: {}, networkError: true };
+    return { ok: false, status: 0, body: {}, networkError: true, invalidBody: false };
   }
 }

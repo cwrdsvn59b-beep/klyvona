@@ -5,6 +5,7 @@ import {
   accountsFromBody,
   callConnect,
   canConnectInThisBrowser,
+  connectResultAccepted,
   connectedFromBody,
   instagramConnectLists,
   readConnectReceipt,
@@ -64,15 +65,27 @@ describe("connect requests", () => {
     assert.equal(result.ok, false);
   });
 
-  it("accepts an empty or invalid body and still exposes the status", async () => {
+  it("does not treat HTTP 200 with invalid JSON as a completed action", async () => {
     const result = await callConnect(
-      async () => new Response("not-json", { status: 200 }),
-      "/api/oauth/meta/accounts",
+      async () => new Response("not-json", { status: 200, headers: { "content-type": "application/json" } }),
+      "/api/oauth/meta/disconnect",
+      receipt,
+      { platform: "instagram" },
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.networkError, false);
+    assert.equal(result.invalidBody, true);
+    assert.equal(result.ok, false);
+    assert.equal(connectResultAccepted(result), false);
+  });
+
+  it("accepts HTTP 200 only when the body is a JSON object", async () => {
+    const result = await callConnect(
+      async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      "/api/oauth/meta/disconnect",
       receipt,
     );
-    assert.equal(result.networkError, false);
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.body, {});
+    assert.equal(connectResultAccepted(result), true);
   });
 
   it("reloads the saved list after a successful disconnect response", async () => {
