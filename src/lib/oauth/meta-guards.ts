@@ -470,9 +470,10 @@ export type PendingCandidate = {
   name: string;
   eligible: boolean;
   reason: string | null;
+  authorizationRefresh?: boolean;
 };
 
-/** One row per customer, platform and Instagram/Facebook account id. Username is not the key. */
+/** One row per customer, platform and Instagram account id. A matching saved id stays visible so the customer can confirm a new grant. */
 export function visiblePendingAccounts(
   rows: readonly PendingCandidate[],
   connected: readonly { clientId: string; platform: string; externalAccountId: string }[] = [],
@@ -483,9 +484,9 @@ export function visiblePendingAccounts(
   const best = new Map<string, PendingCandidate>();
   for (const row of rows) {
     const key = `${row.clientId}\0${row.platform}\0${row.externalAccountId}`;
-    if (connectedKeys.has(key)) continue;
+    const next = { ...row, authorizationRefresh: connectedKeys.has(key) };
     const current = best.get(key);
-    if (!current || row.createdAt > current.createdAt) best.set(key, row);
+    if (!current || row.createdAt > current.createdAt) best.set(key, next);
   }
   return [...best.values()];
 }

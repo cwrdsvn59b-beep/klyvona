@@ -24,7 +24,7 @@ describe("same-browser onboarding receipt", () => {
 });
 
 describe("instagram list refresh", () => {
-  it("shows one Instagram once and drops it from the pending list after it is saved", () => {
+  it("shows one refresh card when the same Instagram id is authorized again", () => {
     const lists = instagramConnectLists(
       [
         { id: "p1", platform: "instagram", name: "klyvona_business", eligible: true, reason: null, externalAccountId: "1789" },
@@ -38,7 +38,9 @@ describe("instagram list refresh", () => {
       ],
     );
     assert.deepEqual(lists.connected, [{ platform: "instagram", externalAccountId: "1789" }]);
-    assert.deepEqual(lists.accounts, []);
+    assert.equal(lists.accounts.length, 1);
+    assert.equal(lists.accounts[0]?.id, "p1");
+    assert.equal(lists.accounts[0]?.authorizationRefresh, true);
   });
 
   it("keeps an unsaved Instagram pending and ignores a broken payload", () => {

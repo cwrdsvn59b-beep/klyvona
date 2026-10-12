@@ -295,7 +295,7 @@ function ConnectPage() {
               <p className="mt-1 text-sm">{account.eligible ? "זכאי לפרסום" : account.reason}</p>
               {account.eligible ? (
                 <Button className="mt-3" disabled={busy} onClick={() => choose(account.id)}>
-                  שמירת החשבון
+                  {account.authorizationRefresh ? "אישור עדכון ההרשאה" : "שמירת החשבון"}
                 </Button>
               ) : null}
             </article>

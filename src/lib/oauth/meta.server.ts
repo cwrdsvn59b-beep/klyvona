@@ -12,7 +12,6 @@ import {
   instagramConfigProblem,
   metaConfigProblem,
   secretMatches,
-  selectionAllowed,
   sha256Hex,
   visiblePendingAccounts,
   classifyInstagramConnection,
@@ -393,6 +392,7 @@ export async function listPendingAccounts(request: Request, sql?: Sql): Promise<
       eligible: row.eligible,
       reason: row.reason,
       externalAccountId: row.externalAccountId,
+      authorizationRefresh: row.authorizationRefresh === true,
     })),
     connected,
   });
@@ -403,43 +403,82 @@ export async function selectPendingAccount(request: Request, sql?: Sql): Promise
   const db = sql ?? (await getSql());
   const parsed = await readConnectBody(request, db);
   if (!parsed?.pendingId) return noStore({ error: "unauthorized" }, 401);
-  const rows = await db<{
-    client_id: string;
-    platform: string;
-    external_account_id: string;
-    eligible: boolean;
-    token_ciphertext: string | null;
-    token_expires_at: string | null;
-    expires_at: string;
+  const applied = await db<{
+    client_id: string | null;
+    platform: string | null;
+    pending_account_id: string | null;
+    eligible: boolean | null;
+    has_token: boolean | null;
+    expired: boolean | null;
+    previous_account_id: string | null;
+    updated_count: number | string | null;
+    removed_count: number | string | null;
   }>`
-    select client_id, platform, external_account_id, eligible, token_ciphertext,
-      token_expires_at::text as token_expires_at, expires_at::text as expires_at
-    from oauth_pending_accounts where id = ${parsed.pendingId} limit 1
+    with target as (
+      select id, client_id, platform, external_account_id, token_ciphertext, token_expires_at, eligible, expires_at
+      from oauth_pending_accounts
+      where id = ${parsed.pendingId}
+      for update
+    ),
+    saved as (
+      select external_account_id
+      from social_accounts
+      where client_id = ${parsed.client.id} and platform = 'instagram'
+      for update
+    ),
+    updated as (
+      update social_accounts s
+      set status = 'connected',
+          external_account_id = t.external_account_id,
+          token_ciphertext = t.token_ciphertext,
+          token_expires_at = t.token_expires_at,
+          connected_at = now(),
+          last_error = null
+      from target t
+      where s.client_id = ${parsed.client.id}
+        and s.client_id = t.client_id
+        and s.platform = 'instagram'
+        and t.platform = 'instagram'
+        and t.eligible = true
+        and t.expires_at > now()
+        and t.token_ciphertext is not null
+        and (s.external_account_id is null or s.external_account_id = t.external_account_id)
+      returning s.platform
+    ),
+    removed as (
+      delete from oauth_pending_accounts d
+      using target t, updated u
+      where d.id = t.id
+      returning d.id
+    )
+    select
+      (select client_id from target) as client_id,
+      (select platform from target) as platform,
+      (select external_account_id from target) as pending_account_id,
+      (select eligible from target) as eligible,
+      (select token_ciphertext is not null from target) as has_token,
+      (select expires_at <= now() from target) as expired,
+      (select external_account_id from saved) as previous_account_id,
+      (select count(*)::int from updated) as updated_count,
+      (select count(*)::int from removed) as removed_count
   `;
-  const pending = rows[0];
-  if (!pending) return noStore({ error: "missing" }, 404);
-  const verdict = selectionAllowed({
-    ownerClientId: parsed.client.id,
-    pendingClientId: pending.client_id,
-    eligible: pending.eligible,
-    expired: new Date(pending.expires_at).getTime() <= Date.now(),
+  const row = applied[0];
+  const updatedCount = Number(row?.updated_count ?? 0);
+  if (!row?.client_id) return noStore({ error: "missing" }, 404);
+  if (row.client_id !== parsed.client.id) return noStore({ error: "foreign" }, 403);
+  if (row.platform !== "instagram") return noStore({ error: "unsupported_platform" }, 403);
+  if (row.expired) return noStore({ error: "expired" }, 403);
+  if (row.eligible !== true) return noStore({ error: "ineligible" }, 403);
+  if (row.has_token !== true) return noStore({ error: "ineligible" }, 403);
+  if (updatedCount !== 1) {
+    const mismatch = Boolean(row.previous_account_id) && row.previous_account_id !== row.pending_account_id;
+    return noStore({ error: mismatch ? "instagram_id_mismatch" : "missing_social_account" }, mismatch ? 409 : 409);
+  }
+  return noStore({
+    ok: true,
+    platform: "instagram",
+    refreshed: Boolean(row.previous_account_id),
   });
-  if (pending.platform !== "instagram") return noStore({ error: "unsupported_platform" }, 403);
-  if (verdict !== "ok" || !pending.token_ciphertext) return noStore({ error: verdict }, 403);
-  const updated = await db<{ platform: string }>`
-    update social_accounts
-    set status = 'connected',
-        external_account_id = ${pending.external_account_id},
-        token_ciphertext = ${pending.token_ciphertext},
-        token_expires_at = ${pending.token_expires_at},
-        connected_at = now(),
-        last_error = null
-    where client_id = ${parsed.client.id} and platform = ${pending.platform}
-    returning platform
-  `;
-  if (!updated[0]) return noStore({ error: "missing_social_account" }, 409);
-  await db`delete from oauth_pending_accounts where id = ${parsed.pendingId}`;
-  return noStore({ ok: true, platform: updated[0].platform });
 }
 
 export async function disconnectMeta(request: Request): Promise<Response> {

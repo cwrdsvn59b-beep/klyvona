@@ -11,6 +11,7 @@ export type ListedAccount = {
   eligible: boolean;
   reason: string | null;
   externalAccountId?: string;
+  authorizationRefresh?: boolean;
 };
 
 export type ListedConnected = {
@@ -52,7 +53,7 @@ export function canConnectInThisBrowser(raw: string | null): boolean {
   return readConnectReceipt(raw) !== null;
 }
 
-/** Instagram only. One saved account id once, and a pending row is hidden once that id is saved. */
+/** Instagram only. One account id once. The same saved id remains visible when it carries a new authorization to confirm. */
 export function instagramConnectLists(
   accounts: readonly ListedAccount[],
   connected: readonly ListedConnected[],
@@ -66,11 +67,13 @@ export function instagramConnectLists(
   const pending: ListedAccount[] = [];
   for (const account of accounts) {
     if (account.platform !== "instagram") continue;
-    if (account.externalAccountId && saved.has(account.externalAccountId)) continue;
     const key = account.externalAccountId || account.id;
     if (pendingKeys.has(key)) continue;
     pendingKeys.add(key);
-    pending.push(account);
+    pending.push({
+      ...account,
+      authorizationRefresh: account.authorizationRefresh === true || Boolean(account.externalAccountId && saved.has(account.externalAccountId)),
+    });
   }
   return { accounts: pending, connected: [...saved.values()] };
 }
@@ -89,6 +92,7 @@ export function accountsFromBody(body: Record<string, unknown>): ListedAccount[]
         eligible: row.eligible === true,
         reason: typeof row.reason === "string" ? row.reason : null,
         externalAccountId: typeof row.externalAccountId === "string" ? row.externalAccountId : undefined,
+        authorizationRefresh: row.authorizationRefresh === true,
       },
     ];
   });

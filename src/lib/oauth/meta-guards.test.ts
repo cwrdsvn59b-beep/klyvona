@@ -306,11 +306,11 @@ describe("instagram account save", () => {
     assert.match(select, /instagramConfigProblem/);
     assert.doesNotMatch(select, /metaConfigProblem/);
     assert.match(select, /unsupported_platform/);
-    assert.match(select, /returning platform/);
+    assert.match(select, /returning s\.platform/);
     assert.match(select, /missing_social_account/);
-    const failedUpdate = select.indexOf("missing_social_account");
-    const pendingDelete = select.indexOf("delete from oauth_pending_accounts");
-    assert.ok(failedUpdate > 0 && pendingDelete > failedUpdate);
+    assert.match(select, /instagram_id_mismatch/);
+    assert.match(select, /delete from oauth_pending_accounts d/);
+    assert.match(select, /using target t, updated u/);
     assert.doesNotMatch(select, /selectionWriteSucceeded/);
   });
 });
@@ -351,7 +351,7 @@ describe("instagram account list", () => {
     assert.equal(visible.length, 2);
   });
 
-  it("hides an account that is already saved for this customer", () => {
+  it("keeps a new authorization for an already saved Instagram id", () => {
     const visible = visiblePendingAccounts(
       [
         { ...row, id: "1", createdAt: "2026-10-11T10:00:00Z" },
@@ -359,11 +359,13 @@ describe("instagram account list", () => {
       ],
       [{ clientId: "client-a", platform: "instagram", externalAccountId: "1789" }],
     );
-    assert.deepEqual(visible, []);
+    assert.deepEqual(visible.map((item) => item.id), ["2"]);
+    assert.equal(visible[0]?.authorizationRefresh, true);
     const other = visiblePendingAccounts(
       [{ ...row, id: "1", createdAt: "2026-10-11T10:00:00Z" }],
       [{ clientId: "client-b", platform: "instagram", externalAccountId: "1789" }],
     );
     assert.equal(other.length, 1);
+    assert.equal(other[0]?.authorizationRefresh, false);
   });
 });
