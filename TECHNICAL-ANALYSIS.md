@@ -1,485 +1,132 @@
-# KLYVONA Connect — полный технический анализ
+# KLYVONA Connect — технический анализ
 
-Дата проверки: 11 октября 2026, около 16:18 UTC.
+Дата проверки: 2026-10-12.  
+Репозиторий: https://github.com/cwrdsvn59b-beep/klyvona  
+База этого отчёта: коммит `a3af4a3f57c1e3b9585002a0181dd360f8f93afa`.  
+Рабочий сайт https://spring-orbit-honey-baker.grok.me этим коммитом не обновлялся.
 
-Исходники этой версии — коммит `a2198375f22e5f5154b351975ce3fc903115fc11`. После него код приложения не менялся. Этот документ фиксирует и устройство Meta OAuth, и результат проверки. Секреты и строки подключения не записаны. Новая публикация сайта из этой проверки не делалась.
+Секреты, строки подключения и токены в этот документ не включены.
 
-## 1. Вердикт
+## 1. Стек
 
-| Проверка | Результат |
+Клиент и сервер собраны на TanStack Start и React. Маршруты лежат в `src/routes` и регистрируются в `src/routeTree.gen.ts`. Администратор входит через Better Auth. Данные клиентов хранятся в PostgreSQL: в опубликованном приложении это Neon при наличии `DATABASE_URL`, в локальной разработке без этой переменной используется временный PGLite. Пустая `DATABASE_URL` считается отсутствующей (`src/lib/db.ts`).
+
+Токены социальных сетей шифруются на сервере AES-256-GCM и не отдаются в браузер. Клиентский чек заявки — это `reference` и `connectSecret` в `sessionStorage` ключа `klyvona-onboarding-receipt`. Пароль клиента и пароль Instagram приложение не запрашивает.
+
+## 2. Что видит клиент
+
+Интерфейс на иврите, `dir="rtl"`. На экране подключения клиенту доступен только Instagram.
+
+- `src/routes/connect.tsx` — одна кнопка «התחברות עם Instagram», список одобренных аккаунтов, сохранение, продление и отключение с подтверждением «ביטול».
+- `src/components/onboarding-wizard.tsx` — в шаге соцсетей тоже только Instagram.
+- Кнопки Facebook в клиентском интерфейсе нет. Серверный код Facebook Login for Business в `src/lib/oauth/meta.server.ts` не удалён и клиентской кнопкой не вызывается.
+
+Без чека в этом же браузере показывается точный текст: «המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.» Чек не переносится на другой телефон. Это не вход по паролю.
+
+## 3. Маршруты
+
+| Путь | Назначение |
 |---|---|
-| Полный `npm test` | **FAIL** |
-| Тесты приложения и Meta OAuth | **PASS**, 76 из 76 |
-| `tsc --noEmit` | **PASS** |
-| `npm run build` | **PASS** |
-| Привязка клиента и повтор OAuth state | **PASS** |
-| Миграция `0003` на боевой Neon | **UNVERIFIED** |
-| Весь живой сайт побайтно равен `a219837` | **UNVERIFIED** |
-| Без ключей OAuth не стартует | **PASS** |
-| Выбор, отключение и обновление закрыты без секрета клиента | **PASS** |
-| Можно сразу создавать приложение Meta | **Нет** |
+| `/` | Заявка |
+| `/connect` | Подключение Instagram |
+| `/login` | Вход администратора |
+| `/admin`, `/admin/clients/$clientId` | Кабинет KLYVONA |
+| `/api/auth/$` | Better Auth |
+| `/api/oauth/$provider/start` и `callback` | Старт и возврат OAuth |
+| `/api/oauth/instagram/renew` | Продление только Instagram |
+| `/api/oauth/meta/accounts` | Список ожидающих и сохранённых аккаунтов |
+| `/api/oauth/meta/select` | Сохранение выбранного аккаунта |
+| `/api/oauth/meta/disconnect` | Отключение |
+| `/api/oauth/meta/renew` | Запасной разветвитель: Instagram уходит в `renewInstagram`, остальное в `renewMeta` |
 
-## 2. Что это за программа
+## 4. Instagram OAuth
 
-Портал онбординга на иврите, справа налево. Стек: React 19, TanStack Start, Vite, Nitro, пресет Vercel. Вход сотрудника — Better Auth через брокер Grok. База — Neon, если задан `DATABASE_URL`; в превью без него — память PGLite. В опубликованном процессе без `DATABASE_URL` память не открывается.
+Старт: `startInstagramOAuth` в `src/lib/oauth/instagram.server.ts`.  
+Адрес авторизации: `https://www.instagram.com/oauth/authorize`.  
+Разрешения: `instagram_business_basic`, `instagram_business_content_publish`.  
+Идентификатор приложения берётся из `INSTAGRAM_APP_ID`, секрет из `INSTAGRAM_APP_SECRET`. Значения `META_APP_ID` и `META_APP_SECRET` для Instagram не подставляются.
 
-Цены не менялись: пробный план 0 ₪ и 22 фотопоста за 22 рабочих дня; платный план 600 ₪ в месяц с НДС и 44 фотопоста за 22 рабочих дня. Видео не входит.
+Callback: `/api/oauth/instagram/callback`. State одноразовый, сверяется с cookie, живёт 10 минут. Код обменивается на токен только на сервере. Короткий токен переводится в долгий и сохраняется в зашифрованном виде `{ v: 2, userToken, igUserId }`.
 
-Администратор назначается только сервером по `KLYVONA_ADMIN_EMAILS` и подтверждённой почте. Публичного самоназначения нет.
+Пока нет `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `TOKEN_ENCRYPTION_KEY` или постоянной базы, старт возвращает HTTP 503 и не имитирует подключение.
 
-## 3. Meta OAuth в исходниках
+Публичный callback, который нужно держать в Meta:
 
-Файлы: `src/lib/oauth/meta.server.ts`, `src/lib/oauth/meta-guards.ts`, `src/routes/api/oauth/$provider/start.ts`, `src/routes/api/oauth/$provider/callback.ts`, `src/routes/api/oauth/meta/accounts.ts`, `select.ts`, `disconnect.ts`, `renew.ts`, `src/routes/connect.tsx`, `migrations/0003_meta_oauth.sql`.
+`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
 
-Graph API **v26.0**. Разрешения: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`. `business_management` не запрашивается.
+## 5. Продление Instagram
 
-Пока нет `META_APP_ID`, `META_APP_SECRET`, годного `TOKEN_ENCRYPTION_KEY`, а в проде ещё `DATABASE_URL` и публичного origin, старт отвечает HTTP 503 и `oauthActivated: false`. Успешное подключение не имитируется.
+Подтверждённая ошибка коммита `c8a339b`: кнопка вызывала `/api/oauth/meta/renew`, а `renewMeta()` для платформы `instagram` возвращает отключение.
 
-Callback:
+Исправление в `a3af4a3`:
 
-- `https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback`
-- `https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
+- Кнопка вызывает `POST /api/oauth/instagram/renew`.
+- Файл `src/routes/api/oauth/instagram/renew.ts` импортирует только `renewInstagram`.
+- `renewTarget("instagram")` никогда не выбирает Meta.
+- `instagramRenewWrite()` готовит полезную нагрузку версии 2 и срок `token_expires_at`. Если Instagram не прислал срок, пишется `null`.
+- Ошибки 409 `reconnect_required` и 503 не считаются успехом.
+- Реальный запрос обновления токена в Instagram этим исправлением не выполнялся.
 
-Origin в проде берётся из `META_OAUTH_REDIRECT_ORIGIN` или `BETTER_AUTH_URL`, не из подменённого хоста запроса.
+`renewMeta()` оставлен для Facebook и по-прежнему отказывает Instagram. Клиентская кнопка его не вызывает.
 
-Клиент после онбординга получает длинный секрет. В базе лежит только SHA-256, в `clients.connect_secret_hash`. Номера заявки недостаточно. State живёт 10 минут, хранится как хэш, требует cookie `klyvona_meta_oauth` и помечается использованным до обмена кода. Токен шифруется AES-GCM и не уходит в браузер, логи и Make. TikTok остаётся на 503. Публикация постов и сценарии Make не включались.
+## 6. Контракт ответов
 
-Миграция `0003` только добавляет столбец и таблицы `oauth_states` и `oauth_pending_accounts` через `if not exists`. Команд удаления нет.
+`connectResultAccepted()` в `src/lib/oauth/connect-session.ts` не считает успехом ни плохой JSON, ни HTTP 200 с `{"ok": false}`.
 
-Допустима страница Facebook с задачей `CREATE_CONTENT`, `MANAGE`, `PROFILE_PLUS_CREATE_CONTENT` или `PROFILE_PLUS_FULL_CONTROL`, и Instagram Business или Creator, связанный с этой страницей. Личный Instagram сохраняется без токена и как недопустимый.
-
-## 4. Результаты команд
-
-`npm test` — код выхода 1. До тестов в `src/` выполнение не дошло: в команде стоит `&&`. 194 проверки прошли, 13 упали. Провалы в скриптах шаблона:
-
-- `scripts/migration-plan.test.mjs` ждёт пустой каталог `migrations/`, а там `0001_auth.sql`, `0002_klyvona.sql` и `0003_meta_oauth.sql`.
-- `scripts/with-app-env.test.mjs` ждёт `VITE_AUTH_ENABLED=false`. В `.grok/app-env.json` этого ключа нет, потому что вход сотрудника включён.
-- Ещё девять падений в проверках OG и заголовков шаблона.
-
-Отдельный запуск тестов `src/`, включая `src/lib/oauth/meta-guards.test.ts`: 76 пройдено, 0 провалено. Покрыты верный state, отсутствие cookie, просрочка, повтор state, чужой клиент, личный Instagram, неверный секрет, пустые ключи, прод без базы и шифрование токена.
-
-`npx tsc --noEmit` — без ошибок.
-
-`npm run build` — клиент и сервер собраны в `.vercel/output`. Затем мигратор написал: `DATABASE_URL not set — skipping`. Боевая база не изменялась.
-
-## 5. Привязка и повтор
-
-`clientForSecret` в `src/lib/oauth/meta.server.ts` сравнивает секрет с хэшем заявки. Список, выбор и отключение ограничены её `client_id`. Чужой `pendingId` получает `foreign` и HTTP 403 до обновления `social_accounts`.
-
-Повтор callback закрыт условием `used_at is null`. Повтор самого секрета подключения не закрыт: секрет многоразовый и лежит в `sessionStorage`. Украденный секрет позволяет снова управлять только этой заявкой, не чужой. Старые заявки без хэша подключить нельзя.
-
-## 6. Живой сайт
-
-Проверен https://spring-orbit-honey-baker.grok.me без новой публикации.
-
-`POST /api/oauth/facebook/start` с подставным секретом вернул HTTP 503 и текст: Meta OAuth is disabled until the app id, app secret, encryption key, and persistent database are configured. Перехода на Facebook не было.
-
-| Адрес | Ответ |
+| Действие | Успех |
 |---|---|
-| `POST /api/oauth/meta/accounts` | 503, без списка |
-| `POST /api/oauth/meta/select` | 503, без записи |
-| `POST /api/oauth/meta/renew` | 503, без обмена |
-| `POST /api/oauth/meta/disconnect` | 401 `unauthorized` |
+| start | HTTP 2xx, `oauthActivated: true`, `authorizeUrl` начинается с `https://` |
+| accounts | HTTP 2xx, массивы `accounts` и `connected`, без `ok: false` |
+| select и disconnect | HTTP 2xx, `ok: true` и непустой `platform` |
+| renew | HTTP 2xx и `ok: true` |
 
-Страница `/connect` есть. Её файл `connect-BGjUR1Yk.js` совпал по имени с файлом локальной сборки этого исходника. `Last-Modified` этого файла: `Sun, 11 Oct 2026 16:15:30 GMT`. Коммит создан в `16:11:40Z`.
+После сохранения, продления и отключения список запрашивается снова. Один Instagram Account ID показывается один раз. Уже сохранённый аккаунт скрывается из списка ожидания. Ошибка сети не помечается как выполненное действие.
 
-Входной файл сайта — `index-ClpuOK3H.js`. Локальная сборка дала `index-BaUU45jU.js`. SHA деплоя в заголовках нет, есть только `x-vercel-id` запроса. Поэтому совпадение экрана подключения доказано, а побайтное равенство всего деплоя коммиту — нет.
+## 7. База и изоляция тестов
 
-`DATABASE_URL` в среде проверки не задан. Список `_migrations` на Neon отсюда не читается. Ответ 503 до таблиц OAuth не доходит, так что применение `0003` на боевой базе не доказано и не опровергнуто.
+Таблицы миграций 0001–0003 включают клиентов, профили, социальные аккаунты, `oauth_states`, `oauth_pending_accounts` и `clients.connect_secret_hash`. Этот коммит миграции не запускал и записи Neon не менял.
 
-## 7. Что блокирует приложение Meta
+`scripts/browser-env.mjs` перед тестовым Vite подставляет пустую строку в `DATABASE_URL` и другие секретные ключи. Пустая строка важна: плагин TanStack Start делает `Object.assign(process.env, loadEnv(...))`, и удалённый ключ файл `.env` мог бы вернуть. В каталоге проекта на момент проверки не было `.env`, `.env.local` и `.env.production`.
 
-1. На публикации не подтверждены `META_APP_ID`, `META_APP_SECRET` и `TOKEN_ENCRYPTION_KEY`.
-2. Не доказано, что у сайта есть `DATABASE_URL` и что миграция `0003` уже применена. Без `oauth_states` callback упадёт после включения ключей.
-3. Не доказано, что `BETTER_AUTH_URL` равен `https://spring-orbit-honey-baker.grok.me`.
-4. В приложении Meta нужно вписать оба callback и пройти проверку пяти разрешений.
-5. У клиента должна быть страница Facebook и связанный профессиональный Instagram, плюс право публикации.
-6. `KLYVONA_ADMIN_EMAILS` по-прежнему нужен отдельно для админки.
-7. Полный `npm test` красный из-за тестов шаблона. Это не дыра OAuth, но набор целиком не зелёный.
+Тестовый сервер браузерных проверок — `127.0.0.1:8099`, команда `npm run test:browser`. Обычный `npm test` этот сервер не поднимает.
 
-Ключи TikTok и `MAKE_WEBHOOK_URL` для этого шага не нужны.
+`npm run build` по-прежнему вызывает миграцию. Для проверки сборки без базы используется `npm run build:check`.
 
-## 8. Проверка боевой базы, 11 октября 2026, около 16:30 UTC
+## 8. Фактические результаты проверок
 
-Проверка была только на чтение. Данные не менялись, миграции не применялись, сайт не публиковался. Значения секретов не читались.
+Проверено в среде сборки 2026-10-12. Это не проверка физического телефона и не боевой OAuth.
 
-| Проверка | Где | Результат |
+| Команда | Код выхода | Итог |
 |---|---|---|
-| Рабочий постоянный `DATABASE_URL` | Опубликованный сайт | **UNVERIFIED** |
-| Миграции `0001`, `0002`, `0003` и таблицы OAuth | Опубликованный сайт | **UNVERIFIED** |
-| Заявка `KV-J32PC5` лежит в постоянном PostgreSQL | Опубликованный сайт | **UNVERIFIED** |
-| `BETTER_AUTH_URL` | Опубликованный сайт | **UNVERIFIED** |
-| `KLYVONA_ADMIN_EMAILS` | Опубликованный сайт | **UNVERIFIED** |
-| Те же переменные | Локальная рабочая копия | **FAIL**: не заданы |
-
-`GET /api/auth/get-session` на https://spring-orbit-honey-baker.grok.me вернул HTTP 200 и `null`. Без cookie Better Auth заканчивает запрос до базы, поэтому это не доказательство Neon.
-
-`POST /api/oauth/facebook/start` вернул HTTP 503 с общим текстом про ключи Meta, шифрование и постоянную базу. Код проверяет базу раньше, но наружу отдаёт одну фразу. По ней нельзя понять, чего именно не хватает.
-
-Публичного чтения таблиц нет. Строки подключения в среде проверки нет, поэтому `_migrations`, `oauth_states`, `oauth_pending_accounts` и `clients.connect_secret_hash` на опубликованном PostgreSQL не проверялись.
-
-Заявка `KV-J32PC5` создавалась на более ранней сборке, которая могла писать в память. Её присутствие в Neon не доказано.
-
-Локально не заданы `DATABASE_URL`, `BETTER_AUTH_URL` и `KLYVONA_ADMIN_EMAILS`. Это не состояние опубликованного сайта.
-
-В Publish > Secrets доказанно отсутствующих боевых значений нет. `DATABASE_URL` и `BETTER_AUTH_URL` должен подставить Grok, их не вводят вручную. `KLYVONA_ADMIN_EMAILS` платформа не задаёт: если строки нет, её добавляют вручную, но сейчас нельзя подтвердить, есть она или нет. `VITE_NEON_AUTH_URL` и `NEON_AUTH_BASE_URL` код не читает и PostgreSQL ими не подключается.
-
-Код приложения в этом коммите не менялся относительно `a219837`.
-
-## 9. Instagram OAuth, 11 октября 2026, около 19:10 UTC
-
-Код приложения по-прежнему не менялся относительно `a219837`. Секреты в этот файл не входят. Сайт этим коммитом не публикуется.
-
-После отдельной проверки администратором боевая база ответила, что это сетевой PostgreSQL и что миграция `0003_meta_oauth.sql` записана. Временный маршрут диагностики после этого удалён и в репозиторий не входит.
-
-### Опубликованный сайт
-
-`POST /api/oauth/instagram/start` с несуществующим клиентом вернул HTTP 401. `GET /api/oauth/instagram/callback` без кода вернул HTTP 303 на `/connect?error=state`. Прежний HTTP 503 из-за пустой конфигурации исчез. Обмен authorization code не запускался.
-
-Сервер принимает конфигурацию только если непусты `META_APP_ID` и `META_APP_SECRET`, `TOKEN_ENCRYPTION_KEY` декодируется в 32 байта и задан `META_OAUTH_REDIRECT_ORIGIN` либо `BETTER_AUTH_URL`. Значения переменных не читались. Повторная публикация для уже применённых Secrets не требовалась.
-
-`TOKEN_ENCRYPTION_KEY` — это base64 ровно 32 байт, ключ AES-256-GCM. Hex и обычная строка не подходят. Проверка стоит в `encryptionKeyReady` до старта OAuth.
-
-Redirect URI текущего кода:
-
-`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
-
-Совпадение этого адреса с кабинетом Meta снаружи не подтверждено: сервер не возвращает сохранённый origin.
-
-### Это Facebook Login, не Instagram Login
-
-Instagram и Facebook идут в `https://www.facebook.com/v26.0/dialog/oauth` и `https://graph.facebook.com/v26.0/oauth/access_token`. Разрешения: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`. Аккаунт Instagram ищется только как профессиональный аккаунт страницы Facebook.
-
-В коде нет `https://www.instagram.com/oauth/authorize`, `https://api.instagram.com/oauth/access_token` и разрешений `instagram_business_basic`, `instagram_business_content_publish`. Настроенный в Meta продукт Instagram API with Instagram Login опубликованному приложению не соответствует.
-
-### Безопасный переход только Instagram
-
-Таблицы `oauth_states`, `oauth_pending_accounts` и `social_accounts`, шифрование AES-GCM, секрет клиента и сценарии Make можно сохранить. Новую миграцию делать не нужно. Нельзя лишь подменить адрес в общем потоке Facebook.
-
-Нужно отдельно для `instagram`:
-
-- авторизация на `https://www.instagram.com/oauth/authorize`;
-- обмен кода через `POST https://api.instagram.com/oauth/access_token`;
-- длинный токен через `https://graph.instagram.com/access_token` и `grant_type=ig_exchange_token`;
-- профиль через `https://graph.instagram.com/me`;
-- разрешения `instagram_business_basic` и `instagram_business_content_publish`;
-- одна ожидающая запись без токена страницы;
-- продление через `ig_refresh_token`;
-- отдельная кнопка Instagram на экране подключения.
-
-`META_APP_ID` и `META_APP_SECRET` подходят для Instagram Login, только если это Instagram App ID и Instagram App Secret из кабинета. Если они отличаются от учётных данных Facebook, их нельзя перезаписывать: Facebook Login использует те же имена. Тогда для Instagram нужны отдельные переменные.
-
-Токен в webhook Make по-прежнему не отправляется.
-
-## 10. План перехода Instagram на Instagram Login
-
-Код приложения в этом коммите не меняется. `META_APP_ID` и `META_APP_SECRET` не перезаписываются. Сайт не публикуется. Значения секретов здесь не записаны.
-
-Сейчас отдельной переменной Instagram App ID нет. Оба входа читают `META_APP_ID` и `META_APP_SECRET`.
-
-Для отдельного Instagram Login нужны новые имена:
-
-- `INSTAGRAM_APP_ID`
-- `INSTAGRAM_APP_SECRET`
-
-Это Instagram App ID и Instagram App Secret из продукта Instagram Login. `TOKEN_ENCRYPTION_KEY` и `META_OAUTH_REDIRECT_ORIGIN` остаются. Callback остаётся:
-
-`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
-
-Разрешения нового потока: `instagram_business_basic` и `instagram_business_content_publish`.
-
-| Файл | Зачем |
-|---|---|
-| `src/lib/oauth/providers.ts` | Отдельные адреса и разрешения только у Instagram |
-| `src/lib/oauth/meta-guards.ts` | Проверка новых имён, без изменения проверки Facebook |
-| `src/lib/oauth/instagram.server.ts` | Новый поток: старт, обмен кода, профиль и продление |
-| `src/routes/api/oauth/$provider/start.ts` | Направить Instagram в новый поток |
-| `src/routes/api/oauth/$provider/callback.ts` | То же для callback |
-| `src/routes/api/oauth/meta/renew.ts` | Продление через `ig_refresh_token` |
-| `src/routes/connect.tsx` | Отдельная кнопка входа через Instagram |
-| `src/lib/oauth/meta-guards.test.ts` | Отказ без новых секретов и верные разрешения |
-| `src/lib/oauth/meta.server.ts` | Только отказ, если платформа `instagram`, чтобы вызов не пошёл в Facebook |
-
-Не меняются миграции, таблицы, AES-256-GCM, секрет клиента, Make, TikTok и обмен кода Facebook.
-
-## 11. Реализация Instagram Login, коммит 32d2632
-
-Дата: 11 октября 2026, около 19:18 UTC. Сайт https://spring-orbit-honey-baker.grok.me этим коммитом не публиковался. Значения секретов в репозиторий не входят.
-
-### Результат
-
-Instagram больше не идёт через Facebook Login. У него отдельный поток Instagram API with Instagram Login. Facebook, TikTok, Make, таблицы PostgreSQL и шифрование AES-256-GCM не переписывались.
-
-| Проверка | Результат |
-|---|---|
-| `npx tsc --noEmit` | **PASS** |
-| Тесты приложения | **PASS**, 80 из 80 |
-| `npm run build` | **PASS** |
-| Боевая база во время сборки | не открывалась: локально нет `DATABASE_URL`, мигратор написал `skipping` |
-| Реальный вход в Instagram | не запускался |
-
-### Изменённые файлы
-
-| Файл | Что сделано |
-|---|---|
-| `src/lib/oauth/providers.ts` | У Instagram свои адреса, разрешения и имена секретов |
-| `src/lib/oauth/meta-guards.ts` | Проверка `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`, сборка адреса авторизации |
-| `src/lib/oauth/instagram.server.ts` | Новый серверный поток |
-| `src/lib/oauth/meta.server.ts` | Три защитных выхода: `instagram` не попадает в обмен Facebook |
-| `src/routes/api/oauth/$provider/start.ts` | Instagram вызывает новый старт |
-| `src/routes/api/oauth/$provider/callback.ts` | Instagram вызывает новый callback |
-| `src/routes/api/oauth/meta/renew.ts` | Instagram продлевается отдельно |
-| `src/routes/connect.tsx` | Отдельная кнопка «התחברות עם Instagram» |
-| `src/lib/oauth/meta-guards.test.ts` | Разделение секретов, разрешения и отказ личного аккаунта |
-
-### Поток
-
-Старт принимает секрет клиента, пишет одноразовый state на 10 минут и ставит cookie `klyvona_ig_oauth`. Браузер уходит на `https://www.instagram.com/oauth/authorize`. Секрет приложения в этот адрес не попадает.
-
-Callback `https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback` сверяет cookie, хэш nonce, срок и платформу. State помечается использованным до обмена кода. Код обменивается на сервере через `POST https://api.instagram.com/oauth/access_token`. Короткий токен меняется на длинный через `https://graph.instagram.com/access_token` с `grant_type=ig_exchange_token`. Профиль читается с `https://graph.instagram.com/me`.
-
-Разрешения только `instagram_business_basic` и `instagram_business_content_publish`.
-
-Токен шифруется существующим AES-256-GCM и кладётся во временную строку `oauth_pending_accounts`. В JSON нет токена страницы Facebook: версия 2 хранит пользовательский токен и Instagram user id. Выбор аккаунта по-прежнему копирует уже зашифрованное значение в `social_accounts` и не отдаёт его браузеру или Make.
-
-Продление идёт на `https://graph.instagram.com/refresh_access_token` с `grant_type=ig_refresh_token`. Личный аккаунт помечается недопустимым, токен для него не сохраняется.
-
-### Секреты
-
-Facebook по-прежнему читает только `META_APP_ID` и `META_APP_SECRET`. Instagram читает только `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`. Общие и не изменённые имена: `TOKEN_ENCRYPTION_KEY`, `META_OAUTH_REDIRECT_ORIGIN`.
-
-Пока `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET` не заданы на публикации, `POST /api/oauth/instagram/start` отвечает HTTP 503 и `oauthActivated: false`. Успешное подключение не имитируется. Эти два имени нужно добавить в Publish > Secrets. Их значения сюда не входят. После этого сайт нужно опубликовать отдельно: этот коммит сам публикацию не делает.
-
-### Что не менялось
-
-Миграции, схема таблиц, `src/lib/crypto/tokens.server.ts`, сценарии Make, TikTok и обмен кода Facebook. Redirect URI остался прежним.
-
-## 12. Проверка перед публикацией Instagram Login, 11 октября 2026, около 19:30 UTC
-
-Код в этой проверке не менялся. Сайт заново не публиковался. Реальная авторизация не запускалась. Значения секретов не читались и в этот файл не входят.
-
-Опубликованный экран подключения уже отдаёт сборку с отдельной кнопкой Instagram. Файл `connect-Ds_0eZg1.js` на https://spring-orbit-honey-baker.grok.me совпал байт в байт с локальной сборкой коммита `32d2632`: 4965 байт, SHA-256 начинается с `e8cd6309a12f6800`. Время файла: 11 октября 2026, 19:29:47 GMT.
-
-| Проверка | Результат | Доказательство |
-|---|---|---|
-| `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET` видны серверу | **PASS** | `POST /api/oauth/instagram/start` с несуществующим клиентом вернул HTTP 401, не 503 |
-| Instagram не использует `META_APP_ID` и `META_APP_SECRET` | **PASS** | В коде Instagram читает только `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`. Facebook по-прежнему читает `META_APP_ID` и `META_APP_SECRET` и на тот же запрос тоже вернул HTTP 401 |
-| Redirect URI | **Частично** | Callback `https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback` без кода вернул HTTP 303 на `/connect?error=state`. Код собирает `{META_OAUTH_REDIRECT_ORIGIN}/api/oauth/instagram/callback`. Текст origin сервер не возвращает |
-| Разрешения `instagram_business_basic` и `instagram_business_content_publish` | **PASS** в коде | Живой адрес авторизации не запрашивался |
-| Facebook, TikTok, PostgreSQL и Make | **Не менялись** | TikTok по-прежнему HTTP 503 и `oauthActivated: false` |
-
-HTTP 401 на старте Instagram означает, что проверка конфигурации прошла: обе переменные Instagram непусты, `TOKEN_ENCRYPTION_KEY` пригоден и задан публичный origin. Если бы `INSTAGRAM_APP_ID` или `INSTAGRAM_APP_SECRET` отсутствовали, новый код вернул бы HTTP 503.
-
-Для Meta остаётся тот же адрес:
-
-`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
-
-Секрет `META_OAUTH_REDIRECT_ORIGIN` должен быть ровно `https://spring-orbit-honey-baker.grok.me`, без пути и без завершающего слэша. Совпадение сохранённого текста с этим адресом снаружи не подтверждено.
-
-## 13. Этап A: кнопки, ошибки OAuth и мобильные устройства
-
-Дата: 11 октября 2026, около 20:02 UTC. Код приложения не менялся. Сайт не публиковался. Секреты не читались и здесь не записаны. Настоящий iPhone и Android не проверялись.
-
-### Одновременные кнопки
-
-В `src/routes/connect.tsx` у Facebook и Instagram разные вызовы: `start("facebook")` и `start("instagram")`. Общего обработчика, вложенных кнопок и наложения из-за RTL нет. Кнопки соседние, высота 48px.
-
-Один флаг `busy` одновременно отключает обе кнопки. Поэтому визуально срабатывают обе. Два запроса из одного нажатия кодом не подтверждены. Повторный тап до перерисовки возможен: `disabled` появляется только после отрисовки.
-
-На шаге онбординга в `src/components/onboarding-wizard.tsx` обе кнопки выключены и подписаны «בקרוב». Они не запускают OAuth.
-
-### Instagram
-
-Сервер собирает `https://www.instagram.com/oauth/authorize` с параметрами `client_id`, `redirect_uri`, `response_type=code`, `scope=instagram_business_basic,instagram_business_content_publish` и `state`. `client_secret` в адрес не входит. Обмен кода идёт на `https://api.instagram.com/oauth/access_token`. Используются только `INSTAGRAM_APP_ID` и `INSTAGRAM_APP_SECRET`.
-
-`window.location.assign` открывает этот адрес напрямую. На iPhone установленное приложение Instagram перехватывает `www.instagram.com` и показывает “Something went wrong” до callback. Ошибка на английском внутри Instagram, а callback KLYVONA показывает иврит. Поэтому запрос до callback не доходит.
-
-State хранится в PostgreSQL и привязан к клиенту. Cookie `klyvona_ig_oauth` и заявка в `sessionStorage` принадлежат исходному браузеру. Возврат через другое приложение может дать `csrf` или пустой экран. Это подтверждено кодом, на устройстве не проверено.
-
-### Facebook
-
-Отдельный поток: `https://www.facebook.com/v26.0/dialog/oauth` и callback `/api/oauth/facebook/callback`. Секреты только `META_APP_ID` и `META_APP_SECRET`. Потоки не объединены.
-
-В Meta ранее регистрировался Instagram callback. Отсутствие `https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback` в продукте Facebook Login остаётся гипотезой. Перехват приложением Facebook на телефоне — тот же механизм, что у Instagram.
-
-Тексты ошибок в `connect.tsx` называют обе сети “Meta”.
-
-### Админка
-
-`src/lib/integrations/health.server.ts` всегда ставит социальным сетям `awaiting_setup`, даже когда ключи найдены. Это не причина сбоя OAuth.
-
-### Что менять позже
-
-- `src/routes/connect.tsx`
-- `src/lib/oauth/instagram.server.ts`
-- `src/lib/oauth/meta.server.ts`
-- `src/components/onboarding-wizard.tsx`
-- `src/lib/integrations/health.server.ts`
-- `src/routes/admin/index.tsx`
-- `src/lib/oauth/meta-guards.test.ts`
-
-Схему PostgreSQL, Make, TikTok, шифрование и Secrets не менять.
-
-Порядок исправления: раздельные состояния кнопок, запуск официального OAuth без отдачи адреса приложению социальной сети, отдельные тексты ошибок, затем правдивый статус в админке.
-
-Автоматически можно проверить нажатия, повторный тап, состав URL, state и ширину RTL. Вход тестовым аккаунтом нужен на настоящих iPhone, Android и компьютере.
-
-## 14. После Instagram Allow на iPhone Safari, 11 октября 2026
-
-Код не менялся. Сайт не публиковался. Секреты, токены и authorization code здесь не записаны. Серверных логов конкретного нажатия Allow нет.
-
-Реальный сценарий: в Safari открылся официальный экран Klyvona-IG для klyvona_business, пользователь нажал Allow, браузер вернулся в KLYVONA, но аккаунт не показан как подключённый. Красный ивритский текст про выбор аккаунта только из списка был виден ещё до нового входа.
-
-### Красный текст
-
-Фраза «בחרו רק עמוד או חשבון Instagram שמופיעים ברשימה» задаётся в `src/routes/connect.tsx` только при параметре `ready` в адресе. Это не статическое предупреждение и не отказ проверки списка. Все сообщения, включая это, выводятся классом `text-danger`, поэтому инструкция выглядит как ошибка. Если текст был до нового входа, страница уже была открыта как `/connect?ready=1`.
-
-### Callback
-
-Успешный путь в `src/lib/oauth/instagram.server.ts` заканчивается редиректом на `/connect?ready=1` после проверки state, обмена кода, длинного токена и записи в `oauth_pending_accounts`. Ошибка обмена дала бы `/connect?error=exchange`, потеря cookie — текст «בקשת החיבור לא אומתה». Видимый текст про список означает, что последний известный возврат сервер считает успешным. Без нового адреса и строки в базе нельзя отличить новый успех от старого `ready=1`.
-
-### Почему аккаунт не виден
-
-Callback не ставит `social_accounts.status = connected`. Он пишет временную строку: Instagram user ID в `external_account_id`, username в `display_name`, токен зашифрован. Статус «ממתין להגדרה» остаётся, пока пользователь не нажмёт «שמירת החשבון». При `ready` страница сама список не запрашивает. Список появляется только по кнопке «הצגת חשבונות שאושרו».
-
-### Список разрешённых аккаунтов
-
-`selectionAllowed` в `src/lib/oauth/meta-guards.ts` сравнивает внутренний ID клиента KLYVONA, срок временной строки и признак профессионального аккаунта. Instagram ID с username не сравнивается. Заранее сохранённого списка Instagram ID в заявке нет. `klyvona_business` в коде ни к какому клиенту не привязан: это username, который Meta вернула для владельца `connectSecret`. Чужую заявку выбрать нельзя.
-
-### Минимальное исправление
-
-При `ready=1` сразу показывать временный список и не красить эту фразу как ошибку. Статус «подключено» ставить только после явного выбора строки. Проверку клиента не отключать.
-
-Для подтверждения этого Allow нужны адрес после возврата и наличие строки `oauth_pending_accounts` с платформой `instagram` и заполненным `used_at` у state. Токен и код авторизации не нужны.
-
-## 15. Facebook OAuth и Android, этап 1, 11 октября 2026
-
-Код не менялся. Сайт не публиковался. Секреты не читались. Реальный Android не проверялся. Instagram на iPhone Safari уже прошёл успешно.
-
-### Facebook
-
-Сервер собирает `https://www.facebook.com/v26.0/dialog/oauth`. Параметры: `client_id` из `META_APP_ID`, `redirect_uri`, `state`, `response_type=code`, `scope`. `META_APP_SECRET` в адрес не входит. Код: `src/lib/oauth/meta.server.ts` и `src/lib/oauth/meta-guards.ts`.
-
-Redirect URI: `{META_OAUTH_REDIRECT_ORIGIN}/api/oauth/facebook/callback`. Тот же origin уже вернул успешный Instagram, поэтому при текущем значении путь такой:
-
-`https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/callback`
-
-Регистрация этого адреса в продукте Facebook Login не подтверждена. Адрес Instagram Login туда сам не копируется.
-
-State хранится 10 минут в PostgreSQL и привязан к клиенту. Cookie `klyvona_meta_oauth` отдельная, HttpOnly, SameSite=Lax. Заявка остаётся в `sessionStorage` того же браузера.
-
-Разрешения: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`. После Allow сервер меняет код на токен и читает `GET /me/accounts`. Выбранная страница пишется в `social_accounts` этой заявки. После обновления страницы экран показывает «מחובר». Если Страницы нет, список пуст и статус не меняется.
-
-### Перехват приложением
-
-Файл Apple у Facebook исключает только `/dialog/oauth`. Код открывает `/v26.0/dialog/oauth`. Фрагмента `#weblink` у Facebook нет. На iPhone приложение Facebook может перехватить вход. На Android это не проверялось.
-
-Повторный Facebook OAuth всё ещё может добавить строки в `oauth_pending_accounts`. На экране остаётся одна карточка на ID страницы. Старые строки не удалялись.
-
-### Что проверить в Meta до Allow
-
-1. Facebook Login включён.
-2. Valid OAuth Redirect URIs содержит точный callback выше.
-3. Есть `pages_show_list`, `pages_manage_posts` и `pages_read_engagement`. `instagram_basic` и `instagram_content_publish` либо добавлены, либо диалог может отказать.
-4. Пользователь телефона — администратор, разработчик или тестировщик, пока приложение в разработке.
-5. У пользователя есть Страница Facebook, которой он управляет.
-
-Код готов к первому тесту только после этих пунктов. Их настройка не подтверждена. Chrome на iPhone, Chrome на Android и Samsung Internet не проверялись.
-
-## 16. Проверка Facebook OAuth после Secrets, 12 октября 2026
-
-Код приложения этим коммитом не меняется. Сайт не публикуется. Значения Secrets не читались и здесь не записаны. Авторизация Facebook не запускалась.
-
-### Итог
-
-Нажимать «Подключить Facebook» на опубликованном сайте пока нельзя. Исправление есть в локальной копии, но живой сервер его не подтвердил.
-
-| Проверка | Статус |
-| --- | --- |
-| `META_FACEBOOK_CONFIG_ID` виден серверу этой среды | NOT VERIFIED. В локальном процессе переменная отсутствует. |
-| Локальный Facebook-адрес | PASS |
-| Тот же адрес на опубликованном сайте | NOT VERIFIED |
-| В локальном Facebook-запросе нет разрешений Instagram | PASS |
-| На опубликованном сайте этих разрешений нет | NOT VERIFIED |
-| TypeScript и production build локального кода | PASS |
-| Пустой POST на живой `/api/oauth/facebook/start` | PASS: HTTP 401 `unauthorized`, без аварии |
-
-### Что подтверждено в локальном коде
-
-`src/lib/oauth/meta.server.ts`, функция `startMetaOAuth`, читает `META_FACEBOOK_CONFIG_ID`. Если переменная пуста, ответ 503 и state не создаётся. Иначе адрес собирается так:
-
-- `client_id` из `META_APP_ID` через `appCredentials().appId`;
-- `redirect_uri` из существующего `callbackUrl`, путь `/api/oauth/facebook/callback`;
-- `state` — одноразовое значение, привязанное к клиенту;
-- `response_type=code`;
-- `override_default_response_type=true`;
-- `config_id` из переменной окружения.
-
-Параметра `scope` в этой функции больше нет. Строк `instagram_basic` и `instagram_content_publish` в ней нет. `META_APP_SECRET`, callback, проверка state и шифрование токена не менялись. Instagram OAuth этим участком не вызывается: при платформе `instagram` функция сразу завершается.
-
-### Что подтверждено снаружи
-
-В GitHub на момент коммита `f357d5b` файл `src/lib/oauth/meta.server.ts` ещё ставит `scope` и не содержит `META_FACEBOOK_CONFIG_ID`.
-
-Живая страница `/connect` отдаёт `index-Bpe36ztV.js`. Локальная сборка с исправлением содержит `index-CzFI0xQZ.js`. Это разные сборки. Совпадение имени `connect-4knyTwDv.js` ничего не доказывает: страница подключения в этом исправлении не менялась.
-
-POST `{}` на `https://spring-orbit-honey-baker.grok.me/api/oauth/facebook/start` вернул только `{"error":"unauthorized"}`. Это отказ из-за отсутствия клиента. Тот же ответ даёт и старый код, если обычные ключи Meta уже настроены. Поэтому 401 не доказывает, что в адрес подставлен `config_id`.
-
-Секреты Publish не видны локальному процессу. Имена `META_APP_ID`, `META_APP_SECRET`, `META_OAUTH_REDIRECT_ORIGIN` и `INSTAGRAM_APP_ID` в этой среде тоже отсутствуют. Их значения не запрашивались.
-
-### Что нужно до ручного теста
-
-Опубликовать локальное исправление и сохранить `META_FACEBOOK_CONFIG_ID` в Publish, Secrets. После этого один ручной запуск кнопки не меняет поток Instagram. До публикации кнопка на живом сайте может снова открыть старый адрес со `scope`.
-
-## 17. Исправление Facebook Login for Business, 12 октября 2026
-
-Это отчёт по коммиту `51b4896`, а не замена исходников. Сайт `spring-orbit-honey-baker.grok.me` этим коммитом не публикуется. Значение `META_FACEBOOK_CONFIG_ID` в репозиторий не входит. Реальная авторизация Facebook не запускалась.
-
-### FIXED
-
-Изменены рабочие файлы, не только этот отчёт:
-
-- `src/lib/oauth/meta.server.ts`
-- `src/lib/oauth/meta-guards.ts`
-- `src/lib/oauth/providers.ts`
-- `src/lib/oauth/meta-guards.test.ts`
-
-`src/lib/oauth/instagram.server.ts` не изменялся.
-
-### DIFF
-
-`startMetaOAuth` читает `process.env.META_FACEBOOK_CONFIG_ID`. Пустое значение даёт HTTP 503, state не создаётся и старый адрес со `scope` не открывается.
-
-Иначе `facebookAuthorizeUrl` собирает `https://www.facebook.com/v26.0/dialog/oauth` с параметрами:
-
-- `client_id` из `META_APP_ID`;
-- `config_id` из `META_FACEBOOK_CONFIG_ID`;
-- `redirect_uri` = `{META_OAUTH_REDIRECT_ORIGIN}/api/oauth/facebook/callback`;
-- `state`;
-- `response_type=code`;
-- `override_default_response_type=true`.
-
-Параметра `scope` в адресе нет. Разрешения берутся из конфигурации Facebook Login for Business. Callback, обмен authorization code, проверка state и шифрование токена не менялись. В каталоге провайдеров у Facebook больше не перечислены старые разрешения Instagram.
-
-### BUILD
-
-- `npx tsc --noEmit`: PASS
-- тесты OAuth, state и кнопок: PASS, 30 из 30
-- `npm run build`: PASS
-
-### COMMIT
-
-`51b4896aa8408ebba043faba583faf3c927ddc80` в `main`.
-
-### DEPLOY
-
-NO. Публикация на рабочий сайт из этой среды недоступна. Локальная сборка не является опубликованной версией.
-
-### INSTAGRAM
-
-Код Instagram Login не входил в коммит `51b4896`. Адрес `https://www.instagram.com/oauth/authorize` и разрешения `instagram_business_basic`, `instagram_business_content_publish` сохранены.
-
-### FACEBOOK
-
-NO для кнопки на текущем опубликованном сайте. После Update в Grok, если `META_FACEBOOK_CONFIG_ID` уже сохранён в Secrets, один ручной тест допустим. До Update живой сайт может по-прежнему открывать старый адрес.
-
+| `npm run typecheck` | 0 | PASS |
+| `node --experimental-strip-types --test` для `instagram-renew.test.ts` и `connect-session.test.ts` | 0 | PASS, 14 из 14 |
+| `node --test scripts/browser-env.test.mjs` | 0 | PASS, 1 из 1 |
+| `npm run build:check` | 0 | PASS, строка `db:migrate` не выполнялась |
+| Chromium, размеры 390×844, 412×915 и 1280×800 | 0 для этих трёх | PASS на прошлом прогоне `test:browser`. Это размеры окна, не iPhone и не Android |
+| Firefox | 1 | FAIL: нет системных библиотек GTK, процесс не стартовал |
+| WebKit | 1 | FAIL: нет GTK 4 и GStreamer, процесс не стартовал |
+| `npm run lint` | 1 | FAIL: пустой `catch` в `src/lib/app-data/client.server.ts`; предупреждение зависимостей `useEffect` в `connect.tsx` |
+| Полный `npm test` | 1 на прошлом полном прогоне | 194 прошло, 13 упало в шаблонных проверках карточек и `og:title`. Из-за `&&` набор `src/` тогда не стартовал |
+
+## 9. Что не подтверждено
+
+- Нажатие Allow в настоящем Instagram и возврат authorization code.
+- Запись этого подключения в боевой Neon и отображение после обновления опубликованного сайта.
+- Продление живого токена.
+- Повторный вход после полного закрытия браузера: чек хранится в `sessionStorage` и пропадает вместе с сессией браузера.
+- Физические iPhone Safari, Android Chrome, Samsung Internet и настольный Safari.
+- Публикация постов, оплата и сценарии Make.com. Они этим коммитом не включались.
+
+## 10. Ручная проверка после отдельной публикации сайта
+
+Выполнять в одном браузере телефона, только после того как владелец опубликует этот коммит:
+
+1. Открыть сайт, заполнить заявку и отправить её.
+2. Нажать «התחברות עם Instagram» и разрешить доступ тестовому профессиональному аккаунту.
+3. Вернуться в KLYVONA, сохранить одну карточку и обновить страницу. Должен остаться статус «מחובר», без дубликата.
+4. Не закрывая браузер, снова открыть `/connect`. Аккаунт должен остаться.
+5. Нажать «ניתוק Instagram», затем «ביטול». Аккаунт остаётся.
+6. Повторить отключение и подтвердить его. После обновления страницы подключения быть не должно.
+7. Для продления нажать «חידוש הרשאת Instagram» только на уже сохранённом аккаунте. Запрос должен идти на `/api/oauth/instagram/renew`, а не на `/api/oauth/meta/renew`.
+
+Адрес с параметрами `code` или `state` никуда не отправлять.
