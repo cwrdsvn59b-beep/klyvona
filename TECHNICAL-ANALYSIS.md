@@ -1,162 +1,57 @@
-# KLYVONA Connect — технический анализ
+# KLYVONA Connect — аудит перед первой тестовой публикацией
 
-Дата проверки: 2026-10-12.  
-Репозиторий: https://github.com/cwrdsvn59b-beep/klyvona  
-База этого отчёта: коммит `a3af4a3f57c1e3b9585002a0181dd360f8f93afa`.  
-Рабочий сайт https://spring-orbit-honey-baker.grok.me этим коммитом не обновлялся.
+Коммит исходников: [`db114d8`](https://github.com/cwrdsvn59b-beep/klyvona/commit/db114d82aba20331425d845c9cfff4f0601e1ad0)
 
-Секреты, строки подключения и токены в этот документ не включены.
+Дата аудита: 2026-10-12
 
-## 1. Стек
+Режим: только чтение. Код приложения этим коммитом не меняется. База, токены, Meta API, Make и тесты не вызывались.
 
-Клиент и сервер собраны на TanStack Start и React. Маршруты лежат в `src/routes` и регистрируются в `src/routeTree.gen.ts`. Администратор входит через Better Auth. Данные клиентов хранятся в PostgreSQL: в опубликованном приложении это Neon при наличии `DATABASE_URL`, в локальной разработке без этой переменной используется временный PGLite. Пустая `DATABASE_URL` считается отсутствующей (`src/lib/db.ts`).
+## A. Что подтверждено кодом
 
-Токены социальных сетей шифруются на сервере AES-256-GCM и не отдаются в браузер. Клиентский чек заявки — это `reference` и `connectSecret` в `sessionStorage` ключа `klyvona-onboarding-receipt`. Пароль клиента и пароль Instagram приложение не запрашивает.
+OAuth Instagram Login запрашивает ровно два scope: `instagram_business_basic` и `instagram_business_content_publish`.
 
-## 2. Что видит клиент
+```ts
+// src/lib/oauth/meta-guards.ts:43
+export const INSTAGRAM_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"] as const;
+```
 
-Интерфейс на иврите, `dir="rtl"`. На экране подключения клиенту доступен только Instagram.
+Адрес авторизации собирается в `instagramAuthorizeUrl()` (`src/lib/oauth/meta-guards.ts:109`). Callback — `GET /api/oauth/instagram/callback` (`src/routes/api/oauth/$provider/callback.ts:10`), он вызывает `finishInstagramOAuth()`. State одноразовый, привязан к клиенту и cookie.
 
-- `src/routes/connect.tsx` — одна кнопка «התחברות עם Instagram», список одобренных аккаунтов, сохранение, продление и отключение с подтверждением «ביטול».
-- `src/components/onboarding-wizard.tsx` — в шаге соцсетей тоже только Instagram.
-- Кнопки Facebook в клиентском интерфейсе нет. Серверный код Facebook Login for Business в `src/lib/oauth/meta.server.ts` не удалён и клиентской кнопкой не вызывается.
+Обмен кода идёт на `https://api.instagram.com/oauth/access_token`, затем короткоживущий токен меняется на долгоживущий, после чего вызывается `GET graph.instagram.com/me?fields=user_id,username,account_type,id` (`src/lib/oauth/instagram.server.ts:121–171`). В `social_accounts` сохраняется профессиональный `user_id`, а не App ID: это решает `resolveInstagramAccount()` (`src/lib/oauth/meta-guards.ts:197`). Токен шифруется AES-256-GCM и лежит только в `token_ciphertext`. В браузер и в Make он не отдаётся.
 
-Без чека в этом же браузере показывается точный текст: «המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.» Чек не переносится на другой телефон. Это не вход по паролю.
+Уже сохранённый payload — `{ v: 2, userToken, igUserId, username? }` (`src/lib/oauth/instagram-renew.ts:1–16`). Поля `permissions` в нём нет. `readInstagramShortToken()` читает только `access_token` и `user_id` и выбрасывает список прав, который Meta возвращает при обмене кода (`src/lib/oauth/meta-guards.ts:150–159`).
 
-## 3. Маршруты
+`grantedPermissions()` не делает сетевого запроса и всегда возвращает `{ documented: false }` (`src/lib/oauth/instagram.server.ts:173–178`). Поэтому живой `/api/oauth/instagram/permissions` не может вернуть `permission_confirmed`. Успешный `/me` в коде явно не считается правом публикации (`src/lib/oauth/meta-guards.ts:275` и `325–328`).
 
-| Путь | Назначение |
-|---|---|
-| `/` | Заявка |
-| `/connect` | Подключение Instagram |
-| `/login` | Вход администратора |
-| `/admin`, `/admin/clients/$clientId` | Кабинет KLYVONA |
-| `/api/auth/$` | Better Auth |
-| `/api/oauth/$provider/start` и `callback` | Старт и возврат OAuth |
-| `/api/oauth/instagram/renew` | Продление только Instagram |
-| `/api/oauth/meta/accounts` | Список ожидающих и сохранённых аккаунтов |
-| `/api/oauth/meta/select` | Сохранение выбранного аккаунта |
-| `/api/oauth/meta/disconnect` | Отключение |
-| `/api/oauth/meta/renew` | Запасной разветвитель: Instagram уходит в `renewInstagram`, остальное в `renewMeta` |
+Создания контейнера, проверки `status_code` и `media_publish` в приложении нет. Единственное упоминание `media_publish` — проверка теста, что вызов не выполнялся.
 
-## 4. Instagram OAuth
+`publishing_jobs` создана в `migrations/0002_klyvona.sql:87–96`. В `src/` есть только два `SELECT` в админке. Никто не вставляет задания.
 
-Старт: `startInstagramOAuth` в `src/lib/oauth/instagram.server.ts`.  
-Адрес авторизации: `https://www.instagram.com/oauth/authorize`.  
-Разрешения: `instagram_business_basic`, `instagram_business_content_publish`.  
-Идентификатор приложения берётся из `INSTAGRAM_APP_ID`, секрет из `INSTAGRAM_APP_SECRET`. Значения `META_APP_ID` и `META_APP_SECRET` для Instagram не подставляются.
+## B. Чего не хватает
 
-Callback: `/api/oauth/instagram/callback`. State одноразовый, сверяется с cookie, живёт 10 минут. Код обменивается на токен только на сервере. Короткий токен переводится в долгий и сохраняется в зашифрованном виде `{ v: 2, userToken, igUserId }`.
+- Достоверного списка прав у уже сохранённого токена. Документация [Business Login](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login) отдаёт `permissions` только в ответе обмена кода. Повторного read-only метода нет, и этот ответ сейчас не сохраняется.
+- Всех трёх вызовов публикации из [Content Publishing](https://developers.facebook.com/docs/instagram-platform/content-publishing): `POST /<IG_ID>/media`, затем `GET /<IG_CONTAINER_ID>?fields=status_code`, затем `POST /<IG_ID>/media_publish`. Нужны публичный JPEG и `creation_id`.
+- Защиты от повторного поста: у `publishing_jobs` нет ключа идемпотентности и поля контейнера.
+- Отдельного разрешения на публикацию. Сейчас секрет подключения из браузера может вызывать connect-API. Этим же секретом публиковать нельзя.
+- Подтверждения из репозитория, что Business Verification завершена и что @klyvona_business добавлен в приложение Meta. Это только состояние панели Meta.
 
-Пока нет `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `TOKEN_ENCRYPTION_KEY` или постоянной базы, старт возвращает HTTP 503 и не имитирует подключение.
+## C. Make
 
-Публичный callback, который нужно держать в Meta:
+В репозитории Make — одно исходящее уведомление после онбординга. `notifyMake()` шлёт `client_id`, `reference`, тариф, отрасль и статусы. Токена, почты и телефона в теле нет (`src/lib/integrations/make.server.ts:7–20`). Событие всегда `onboarding.completed`, `social_status` всегда `awaiting_setup`, платформа — только `instagram` (`src/lib/onboarding.functions.ts:191–204`). URL берётся из `MAKE_WEBHOOK_URL`, принимается только публичный HTTPS, редирект запрещён, таймаут 8 секунд. Результат пишется в `webhook_deliveries`.
 
-`https://spring-orbit-honey-baker.grok.me/api/oauth/instagram/callback`
+Входящего обработчика Make нет. Сценарий не может получить токен и не может запустить публикацию через этот код.
 
-## 5. Продление Instagram
+Без доступа к Make и к production-секретам нельзя проверить, задан ли `MAKE_WEBHOOK_URL`, существует ли сценарий и не публикует ли он где-то отдельно. Строки `webhook_deliveries` в боевой базе тоже не смотрелись.
 
-Подтверждённая ошибка коммита `c8a339b`: кнопка вызывала `/api/oauth/meta/renew`, а `renewMeta()` для платформы `instagram` возвращает отключение.
+## D. Минимальный план
 
-Исправление в `a3af4a3`:
+Публиковать должен сервер KLYVONA, не Make. Токен уже хранится только там. Make можно позже уведомить идентификатором задания и статусом, без токена.
 
-- Кнопка вызывает `POST /api/oauth/instagram/renew`.
-- Файл `src/routes/api/oauth/instagram/renew.ts` импортирует только `renewInstagram`.
-- `renewTarget("instagram")` никогда не выбирает Meta.
-- `instagramRenewWrite()` готовит полезную нагрузку версии 2 и срок `token_expires_at`. Если Instagram не прислал срок, пишется `null`.
-- Ошибки 409 `reconnect_required` и 503 не считаются успехом.
-- Реальный запрос обновления токена в Instagram этим исправлением не выполнялся.
+1. В панели Meta, без изменения кода, проверить, что @klyvona_business — профессиональный аккаунт, добавлен в это приложение, и что выдано `instagram_business_content_publish`. Для своего аккаунта в документации указан Standard Access. Для чужих клиентов нужен Advanced Access. Пока Business Verification на рассмотрении, чужие аккаунты не подключать к публикации.
+2. Перед следующим входом владельца сохранять строку `permissions` из ответа обмена кода внутри уже зашифрованного payload. Текущий токен из-за этого сам не изменится.
+3. После отдельного подтверждения добавить одну админскую серверную функцию: повторно сверить `/me` с сохранённым ID, отказать при несовпадении, создать одно задание, отправить один заранее заданный публичный JPEG в `POST /<IG_ID>/media`, дождаться `FINISHED` и только затем вызвать `media_publish`. Повторный запрос не должен создавать второй контейнер. URL картинки не принимать из браузера.
+4. Make на этом шаге не трогать.
 
-`renewMeta()` оставлен для Facebook и по-прежнему отказывает Instagram. Клиентская кнопка его не вызывает.
+## E. Один следующий шаг
 
-## 6. Контракт ответов
-
-`connectResultAccepted()` в `src/lib/oauth/connect-session.ts` не считает успехом ни плохой JSON, ни HTTP 200 с `{"ok": false}`.
-
-| Действие | Успех |
-|---|---|
-| start | HTTP 2xx, `oauthActivated: true`, `authorizeUrl` начинается с `https://` |
-| accounts | HTTP 2xx, массивы `accounts` и `connected`, без `ok: false` |
-| select и disconnect | HTTP 2xx, `ok: true` и непустой `platform` |
-| renew | HTTP 2xx и `ok: true` |
-
-После сохранения, продления и отключения список запрашивается снова. Один Instagram Account ID показывается один раз. Уже сохранённый аккаунт скрывается из списка ожидания. Ошибка сети не помечается как выполненное действие.
-
-## 7. База и изоляция тестов
-
-Таблицы миграций 0001–0003 включают клиентов, профили, социальные аккаунты, `oauth_states`, `oauth_pending_accounts` и `clients.connect_secret_hash`. Этот коммит миграции не запускал и записи Neon не менял.
-
-`scripts/browser-env.mjs` перед тестовым Vite подставляет пустую строку в `DATABASE_URL` и другие секретные ключи. Пустая строка важна: плагин TanStack Start делает `Object.assign(process.env, loadEnv(...))`, и удалённый ключ файл `.env` мог бы вернуть. В каталоге проекта на момент проверки не было `.env`, `.env.local` и `.env.production`.
-
-Тестовый сервер браузерных проверок — `127.0.0.1:8099`, команда `npm run test:browser`. Обычный `npm test` этот сервер не поднимает.
-
-`npm run build` по-прежнему вызывает миграцию. Для проверки сборки без базы используется `npm run build:check`.
-
-## 8. Фактические результаты проверок
-
-Проверено в среде сборки 2026-10-12. Это не проверка физического телефона и не боевой OAuth.
-
-| Команда | Код выхода | Итог |
-|---|---|---|
-| `npm run typecheck` | 0 | PASS |
-| `node --experimental-strip-types --test` для `instagram-renew.test.ts` и `connect-session.test.ts` | 0 | PASS, 14 из 14 |
-| `node --test scripts/browser-env.test.mjs` | 0 | PASS, 1 из 1 |
-| `npm run build:check` | 0 | PASS, строка `db:migrate` не выполнялась |
-| Chromium, размеры 390×844, 412×915 и 1280×800 | 0 для этих трёх | PASS на прошлом прогоне `test:browser`. Это размеры окна, не iPhone и не Android |
-| Firefox | 1 | FAIL: нет системных библиотек GTK, процесс не стартовал |
-| WebKit | 1 | FAIL: нет GTK 4 и GStreamer, процесс не стартовал |
-| `npm run lint` | 1 | FAIL: пустой `catch` в `src/lib/app-data/client.server.ts`; предупреждение зависимостей `useEffect` в `connect.tsx` |
-| Полный `npm test` | 1 на прошлом полном прогоне | 194 прошло, 13 упало в шаблонных проверках карточек и `og:title`. Из-за `&&` набор `src/` тогда не стартовал |
-
-## 9. Что не подтверждено
-
-- Нажатие Allow в настоящем Instagram и возврат authorization code.
-- Запись этого подключения в боевой Neon и отображение после обновления опубликованного сайта.
-- Продление живого токена.
-- Повторный вход после полного закрытия браузера: чек хранится в `sessionStorage` и пропадает вместе с сессией браузера.
-- Физические iPhone Safari, Android Chrome, Samsung Internet и настольный Safari.
-- Публикация постов, оплата и сценарии Make.com. Они этим коммитом не включались.
-
-## 10. Ручная проверка после отдельной публикации сайта
-
-Выполнять в одном браузере телефона, только после того как владелец опубликует этот коммит:
-
-1. Открыть сайт, заполнить заявку и отправить её.
-2. Нажать «התחברות עם Instagram» и разрешить доступ тестовому профессиональному аккаунту.
-3. Вернуться в KLYVONA, сохранить одну карточку и обновить страницу. Должен остаться статус «מחובר», без дубликата.
-4. Не закрывая браузер, снова открыть `/connect`. Аккаунт должен остаться.
-5. Нажать «ניתוק Instagram», затем «ביטול». Аккаунт остаётся.
-6. Повторить отключение и подтвердить его. После обновления страницы подключения быть не должно.
-7. Для продления нажать «חידוש הרשאת Instagram» только на уже сохранённом аккаунте. Запрос должен идти на `/api/oauth/instagram/renew`, а не на `/api/oauth/meta/renew`.
-
-Адрес с параметрами `code` или `state` никуда не отправлять.
-
-## 11. Цены, администратор и безопасность
-
-Цены в `src/lib/labels.ts` не менялись. Пробный план: 22 фотопоста за 22 рабочих дня. Платный план: 600 ₪ в месяц с НДС и 44 фотопоста за 22 рабочих дня. Видео в план не входит.
-
-Администратор назначается только на сервере. Список — `KLYVONA_ADMIN_EMAILS`, почта должна быть подтверждена. Публичного `claimAdminSeat` в коде нет. Заявка клиента не пишет строки сотрудников.
-
-Токен не попадает в HTML, адрес возврата и webhook Make. В webhook уходят только идентификаторы и статусы, не сырой OAuth-токен. Отключение стирает сохранённый шифртокен у этого клиента.
-
-Секреты для Instagram и кабинета задаются по именам: `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`, `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `META_OAUTH_REDIRECT_ORIGIN`, `KLYVONA_ADMIN_EMAILS` и параметры Better Auth. `META_APP_ID` и `META_APP_SECRET` относятся к оставшемуся серверному Facebook и кнопкой Instagram не используются. Значения здесь не приводятся. Наличие каждого секрета в опубликованном процессе этим коммитом заново не проверялось.
-
-## 12. Итог версии
-
-Код исправления продления — `a3af4a3`. Этот документ добавляется следующим коммитом. Клиентский путь Instagram отделён от Facebook. Продление идёт в собственный обработчик и при успехе сохраняет новый шифртокен и срок. Ответы `ok: false` и неверный JSON не показываются как успех. Тестовый Vite не получает боевую `DATABASE_URL` из файла окружения.
-
-Боевой сайт, живой Allow и физические телефоны остаются непроверенными. Публикация сайта требует отдельного подтверждения владельца.
-
-## 13. Исправления после d66d302
-
-Проверен весь клиентский путь, не только последний diff. Найдены и исправлены три ошибки в исходниках:
-
-1. Новая заявка создавала строки Facebook и TikTok и отправляла их в Make. Теперь создаётся только Instagram. Старые строки базы не удалялись.
-2. Публичные `/api/oauth/facebook/start` и callback запускали Facebook Login. Теперь клиентский маршрут принимает только Instagram. Серверные функции Facebook в `meta.server.ts` оставлены и из интерфейса не вызываются.
-3. Успешное сохранение и инструкция после возврата из Instagram рисовались красным, как ошибка. Ошибка остаётся красной, успех зелёным, подсказка серой.
-
-Продление по-прежнему идёт на `/api/oauth/instagram/renew`. Тест шифрует пробный токен AES-256-GCM и проверяет, что открытый текст в сохранённой строке отсутствует. Боевой токен не обновлялся.
-
-Проверки этой правки: `tsc` код 0, `eslint` код 0, тесты `src/` 108 из 108 код 0, `build:check` код 0. Полный `npm test` код 1: 195 прошло, 13 упало в шаблонных проверках карточек и того, что у шаблона выключена авторизация. Эти проверки требуют откатить рабочий вход администратора, поэтому не «исправлялись». Chromium 3 из 3. Firefox и WebKit не запустились из-за отсутствующих системных библиотек.
-
-
+Ничего не публиковать. Сначала в панели Meta посмотреть, выдано ли @klyvona_business право `instagram_business_content_publish`. Код это у текущего токена проверить не может: список прав при входе был отброшен, а безопасного повторного запроса нет.
