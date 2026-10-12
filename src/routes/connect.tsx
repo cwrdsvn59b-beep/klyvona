@@ -87,7 +87,7 @@ function ConnectPage() {
         setMessage("החיבור עדיין ממתין להגדרה בשרת. לא נוצר חיבור מדומה.");
         return;
       }
-      if (!connectResultAccepted(result) || typeof result.body.authorizeUrl !== "string") {
+      if (!connectResultAccepted(result, "start") || typeof result.body.authorizeUrl !== "string") {
         setMessage("לא ניתן לפתוח את Instagram. בדקו שהפנייה נשמרה בדפדפן הזה.");
         return;
       }
@@ -106,7 +106,7 @@ function ConnectPage() {
         setMessage("אין חיבור לשרת. נסו שוב.");
         return false;
       }
-      if (!connectResultAccepted(result)) {
+      if (!connectResultAccepted(result, "accounts")) {
         if (!quiet) setMessage(result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לטעון חשבונות.");
         return false;
       }
@@ -124,7 +124,7 @@ function ConnectPage() {
     setBusy(true);
     try {
       const result = await post("/api/oauth/meta/select", { pendingId: id });
-      if (!result || !connectResultAccepted(result)) {
+      if (!result || !connectResultAccepted(result, "select")) {
         setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
         return;
       }
@@ -142,8 +142,9 @@ function ConnectPage() {
   async function act(path: string, platform: string) {
     setBusy(true);
     try {
+      const action = path.endsWith("/renew") ? "renew" : path.endsWith("/disconnect") ? "disconnect" : null;
       const result = await post(path, { platform });
-      if (!result || !connectResultAccepted(result)) {
+      if (!result || !action || !connectResultAccepted(result, action)) {
         setMessage("הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
         return;
       }

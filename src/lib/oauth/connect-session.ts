@@ -120,9 +120,23 @@ export async function readConnectBody(
   }
 }
 
-/** HTTP 200 with a non-JSON body is not a completed connect action. */
-export function connectResultAccepted(result: ConnectCall): boolean {
-  return result.ok && !result.networkError && !result.invalidBody;
+export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect";
+
+function failedBody(body: Record<string, unknown>): boolean {
+  return body.ok === false || (typeof body.error === "string" && body.error.length > 0);
+}
+
+/** Success depends on the route contract, not only on HTTP 200 and valid JSON. */
+export function connectResultAccepted(result: ConnectCall, action: ConnectAction): boolean {
+  if (!result.ok || result.networkError || result.invalidBody || result.status < 200 || result.status >= 300) return false;
+  const body = result.body;
+  if (failedBody(body)) return false;
+  if (action === "start") {
+    return body.oauthActivated === true && typeof body.authorizeUrl === "string" && body.authorizeUrl.startsWith("https://");
+  }
+  if (action === "accounts") return Array.isArray(body.accounts) && Array.isArray(body.connected);
+  if (action === "select" || action === "disconnect") return body.ok === true && typeof body.platform === "string" && body.platform.length > 0;
+  return body.ok === true;
 }
 
 export async function callConnect(
