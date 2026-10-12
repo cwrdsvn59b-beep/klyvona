@@ -2,6 +2,7 @@ import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { GROK_PROVIDERS, signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { BrandMark } from "@/components/brand-mark";
+import { LegalLinks } from "@/components/legal-links";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -48,6 +49,7 @@ function Login() {
             חזרה להצטרפות
           </Link>
         </p>
+        <LegalLinks className="mt-3" />
       </div>
     </main>
   );

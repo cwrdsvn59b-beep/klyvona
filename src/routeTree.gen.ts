@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteRouteImport } from './routes/admin/route'
 import { Route as ConnectRouteImport } from './routes/connect'
+import { Route as DataDeletionRouteImport } from './routes/data-deletion'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as AdminClientsClientIdRouteImport } from './routes/admin/clients/$clientId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -41,9 +43,19 @@ const ConnectRoute = ConnectRouteImport.update({
   path: '/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DataDeletionRoute = DataDeletionRouteImport.update({
+  id: '/data-deletion',
+  path: '/data-deletion',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -113,7 +125,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteRouteWithChildren
   '/connect': typeof ConnectRoute
+  '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
+  '/privacy': typeof PrivacyRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -130,7 +144,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/connect': typeof ConnectRoute
+  '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
+  '/privacy': typeof PrivacyRoute
   '/admin': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -149,7 +165,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteRouteWithChildren
   '/connect': typeof ConnectRoute
+  '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
+  '/privacy': typeof PrivacyRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -169,7 +187,9 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/connect'
+    | '/data-deletion'
     | '/login'
+    | '/privacy'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
@@ -186,7 +206,9 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/connect'
+    | '/data-deletion'
     | '/login'
+    | '/privacy'
     | '/admin'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
@@ -204,7 +226,9 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/connect'
+    | '/data-deletion'
     | '/login'
+    | '/privacy'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
@@ -223,7 +247,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRouteRoute: typeof AdminRouteRouteWithChildren
   ConnectRoute: typeof ConnectRoute
+  DataDeletionRoute: typeof DataDeletionRoute
   LoginRoute: typeof LoginRoute
+  PrivacyRoute: typeof PrivacyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiOauthProviderCallbackRoute: typeof ApiOauthProviderCallbackRoute
   ApiOauthProviderStartRoute: typeof ApiOauthProviderStartRoute
@@ -259,11 +285,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/data-deletion': {
+      id: '/data-deletion'
+      path: '/data-deletion'
+      fullPath: '/data-deletion'
+      preLoaderRoute: typeof DataDeletionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/': {
@@ -371,7 +411,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRouteRoute: AdminRouteRouteWithChildren,
   ConnectRoute: ConnectRoute,
+  DataDeletionRoute: DataDeletionRoute,
   LoginRoute: LoginRoute,
+  PrivacyRoute: PrivacyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiOauthProviderCallbackRoute: ApiOauthProviderCallbackRoute,
   ApiOauthProviderStartRoute: ApiOauthProviderStartRoute,

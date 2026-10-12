@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Instagram } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { LegalLinks } from "@/components/legal-links";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
 import { cn } from "@/lib/cn";
@@ -244,6 +245,7 @@ export function OnboardingWizard() {
             כניסת צוות
           </Link>
         </p>
+        <LegalLinks className="mt-3" />
       </main>
     </div>
   );

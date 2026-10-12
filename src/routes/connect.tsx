@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { LegalLinks } from "@/components/legal-links";
 import { Button } from "@/components/ui/button";
 import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "@/lib/oauth/connect-buttons";
 import {
@@ -335,6 +336,7 @@ function ConnectPage() {
           </div>
         </div>
       )}
+      <LegalLinks className="mt-8" />
     </main>
   );
 }
