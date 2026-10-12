@@ -16,6 +16,8 @@ import {
   instagramVerifyText,
   instagramConnectLists,
   readConnectReceipt,
+  renewKept,
+  RENEW_KEPT_MESSAGE,
   type ConnectReceipt,
   type ListedAccount,
   type ListedConnected,
@@ -208,6 +210,11 @@ function ConnectPage() {
     try {
       const action = path.endsWith("/renew") ? "renew" : path.endsWith("/disconnect") ? "disconnect" : null;
       const result = await post(path, { platform });
+      if (result && renewKept(result.body)) {
+        const refreshed = await load(true);
+        setMessage(refreshed ? RENEW_KEPT_MESSAGE : "החיבור החדש נשמר. הרשימה לא התעדכנה. לחצו על הצגת חשבונות.", "info");
+        return;
+      }
       if (!result || !action || !connectResultAccepted(result, action)) {
         setMessage("הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
         return;
@@ -248,6 +255,7 @@ function ConnectPage() {
           <Button
             disabled={oauthButtonBusy(pending, "instagram")}
             aria-busy={oauthButtonBusy(pending, "instagram")}
+            className="w-full min-w-0 whitespace-normal"
             onClick={() => start("instagram")}
           >
             התחברות עם Instagram
@@ -294,14 +302,14 @@ function ConnectPage() {
               <p className="text-sm text-muted">{account.platform}</p>
               <p className="mt-1 text-sm">{account.eligible ? "זכאי לפרסום" : account.reason}</p>
               {account.eligible ? (
-                <Button className="mt-3" disabled={busy} onClick={() => choose(account.id)}>
+          <Button className="mt-3 w-full min-w-0 whitespace-normal" disabled={busy} onClick={() => choose(account.id)}>
                   {account.authorizationRefresh ? "אישור עדכון ההרשאה" : "שמירת החשבון"}
                 </Button>
               ) : null}
             </article>
           ))}
           <div className="mt-2 grid gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/instagram/renew", "instagram")}>
+            <Button className="w-full min-w-0 whitespace-normal" variant="secondary" disabled={busy} onClick={() => act("/api/oauth/instagram/renew", "instagram")}>
               חידוש הרשאת Instagram
             </Button>
             {confirmOff ? (

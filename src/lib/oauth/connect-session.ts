@@ -161,6 +161,12 @@ export async function readConnectBody(
   }
 }
 
+export const RENEW_KEPT_MESSAGE = "החיבור החדש נשמר. חידוש ישן לא החליף אותו.";
+
+export function renewKept(body: Record<string, unknown>): boolean {
+  return body.error === "token_replaced" && body.kept === true;
+}
+
 export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect" | "verify" | "permissions";
 export type ConnectNoticeTone = "error" | "ok" | "info";
 

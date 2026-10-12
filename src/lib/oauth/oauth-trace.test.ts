@@ -475,4 +475,71 @@ describe("oauth diagnostic trace", () => {
       await db.close();
     }
   });
+
+  it("does not let a late renew replace a newer saved token", async () => {
+    const restoreEnv = useTestEnv();
+    const { db, sql } = await createDatabase();
+    clearOAuthTrace();
+    try {
+      const oldCipher = await sealSecret(JSON.stringify({
+        v: 2,
+        userToken: "old-token",
+        igUserId: PROFESSIONAL_ID,
+        grantStatus: "permissions_unknown",
+        grantSource: "preserved_on_refresh",
+      }));
+      const newer = await sealSecret(JSON.stringify({
+        v: 2,
+        userToken: "long-lived-token",
+        igUserId: PROFESSIONAL_ID,
+        username: "klyvona_business",
+        grantStatus: "permissions_confirmed",
+        grantSource: "oauth_exchange",
+        grantedPermissions: ["instagram_business_basic", "instagram_business_content_publish"],
+      }));
+      await sql`
+        insert into clients (id, reference_code, contact_name, email, phone, connect_secret_hash)
+        values (${"client-1"}, ${"KV-TEST"}, ${"Test"}, ${"test@example.com"}, ${"0500000000"}, ${sha256Hex("connect-secret")})
+      `;
+      await sql`
+        insert into social_accounts (id, client_id, platform, status, external_account_id, token_ciphertext)
+        values (${"social-1"}, ${"client-1"}, ${"instagram"}, ${"connected"}, ${PROFESSIONAL_ID}, ${oldCipher})
+      `;
+      const { renewInstagram } = await import("./instagram.server.ts");
+      const swapped = {
+        ...quietGraph(),
+        async refresh() {
+          await sql`update social_accounts set token_ciphertext = ${newer}, status = 'connected', last_error = null where id = ${"social-1"}`;
+          return { accessToken: "refreshed-token", expiresIn: 3600 };
+        },
+      };
+      const response = await renewInstagram(customerRequest("/api/oauth/instagram/renew"), swapped, sql);
+      const body = await response.json() as Record<string, unknown>;
+      assert.equal(response.status, 409);
+      assert.equal(body.error, "token_replaced");
+      assert.equal(body.kept, true);
+      const stored = await sql<{ token_ciphertext: string; status: string }>`select token_ciphertext, status from social_accounts where id = ${"social-1"}`;
+      assert.equal(stored[0]?.token_ciphertext, newer);
+      assert.equal(stored[0]?.status, "connected");
+      await sql`update social_accounts set token_ciphertext = ${oldCipher}, status = 'connected' where id = ${"social-1"}`;
+      const failed = {
+        ...quietGraph(),
+        async refresh() {
+          await sql`update social_accounts set token_ciphertext = ${newer} where id = ${"social-1"}`;
+          throw new Error("temporary");
+        },
+      };
+      const broken = await renewInstagram(customerRequest("/api/oauth/instagram/renew"), failed, sql);
+      assert.equal(broken.status, 409);
+      const after = await sql<{ token_ciphertext: string; status: string }>`select token_ciphertext, status from social_accounts where id = ${"social-1"}`;
+      assert.equal(after[0]?.token_ciphertext, newer);
+      assert.notEqual(after[0]?.status, "expired");
+      assert.equal(readOAuthTrace().every((entry) => entry.result === "error"), true);
+      assertNoSecrets(readOAuthTrace());
+    } finally {
+      clearOAuthTrace();
+      restoreEnv();
+      await db.close();
+    }
+  });
 });

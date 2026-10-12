@@ -146,7 +146,7 @@ function AdminHome() {
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">אבחון חיבור Instagram</h2>
-              <Button variant="secondary" size="sm" disabled={tracePanel.loading} aria-busy={tracePanel.loading} onClick={() => void traceController.current.refresh()}>
+              <Button className="min-w-0 max-w-full whitespace-normal" variant="secondary" size="sm" disabled={tracePanel.loading} aria-busy={tracePanel.loading} onClick={() => void traceController.current.refresh()}>
                 {tracePanel.loading ? "מרעננים…" : "רענון יומן האבחון"}
               </Button>
             </div>

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { instagramRenewWrite, instagramTokenPayload, renewTarget } from "./instagram-renew.ts";
-import { connectResultAccepted, instagramPermissionText, type ConnectCall } from "./connect-session.ts";
+import { connectResultAccepted, instagramPermissionText, renewKept, RENEW_KEPT_MESSAGE, type ConnectCall } from "./connect-session.ts";
 import { openSecret, sealSecret } from "../crypto/tokens.server.ts";
 
 describe("instagram renew target", () => {
@@ -105,6 +105,17 @@ describe("instagram renew target", () => {
     };
     assert.equal(connectResultAccepted(denied, "renew"), false);
     assert.equal(connectResultAccepted(disabled, "renew"), false);
+    const replaced: ConnectCall = {
+      ok: false,
+      status: 409,
+      body: { ok: false, error: "token_replaced", kept: true },
+      networkError: false,
+      invalidBody: false,
+    };
+    assert.equal(connectResultAccepted(replaced, "renew"), false);
+    assert.equal(renewKept(replaced.body), true);
+    assert.match(RENEW_KEPT_MESSAGE, /החיבור החדש נשמר/);
+    assert.equal(renewKept({ error: "reconnect_required" }), false);
   });
 
   it("points the button at the Instagram handler and not Meta renew", () => {

@@ -583,22 +583,29 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
       previous: saved,
     });
     const packed = await sealSecret(JSON.stringify(record.tokenPayload));
-    await db`
+    const updated = await db<{ id: string }>`
       update social_accounts
       set status = 'connected', token_ciphertext = ${packed}, token_expires_at = ${record.expiresAt}, last_error = null
-      where client_id = ${parsed.client.id} and platform = ${"instagram"}
+      where client_id = ${parsed.client.id} and platform = ${"instagram"} and token_ciphertext = ${sealed}
+      returning id
     `;
+    if (!updated[0]) {
+      recordOAuthTrace({ operation: "instagram_renew", result: "error", ...emptyOAuthTraceGrant() });
+      return noStore({ ok: false, error: "token_replaced", kept: true }, 409);
+    }
     const written = traceFromStored(record.tokenPayload);
     recordOAuthTrace({ operation: "instagram_renew", result: "success", ...written, permissionsPresent: false });
     return noStore({ ok: true });
   } catch (error) {
     console.error("[instagram] renew failed", error instanceof Error ? error.message : "error");
     recordOAuthTrace({ operation: "instagram_renew", result: "error", ...emptyOAuthTraceGrant() });
-    await db`
+    const expired = await db<{ id: string }>`
       update social_accounts
       set status = 'expired', last_error = ${"ההרשאה פגה או בוטלה. יש לחבר מחדש."}
-      where client_id = ${parsed.client.id} and platform = ${"instagram"}
+      where client_id = ${parsed.client.id} and platform = ${"instagram"} and token_ciphertext = ${sealed}
+      returning id
     `;
+    if (!expired[0]) return noStore({ ok: false, error: "token_replaced", kept: true }, 409);
     return noStore({ error: "reconnect_required" }, 409);
   }
 }
