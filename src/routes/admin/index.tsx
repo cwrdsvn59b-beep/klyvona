@@ -1,10 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { getDashboard, getOAuthTrace, type DashboardData } from "@/lib/admin.functions";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatWhen } from "@/lib/format";
 import { industryLabel, planLabel } from "@/lib/labels";
+import {
+  TRACE_MEMORY_WARNING,
+  createTraceRefreshController,
+  emptyTracePanel,
+  traceOperationLabel,
+  traceResultLabel,
+  type TracePanel,
+} from "@/lib/oauth/oauth-trace-view";
 import { StatusPill } from "@/components/status-pill";
 
 export const Route = createFileRoute("/admin/")({
@@ -17,8 +26,9 @@ function AdminHome() {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [data, setData] = useState<DashboardData | null>(null);
-  const [trace, setTrace] = useState<Array<{ at: string; operation: string; result: string; grantStatus: string; grantSource: string; permissionsPresent: boolean }>>([]);
+  const [tracePanel, setTracePanel] = useState<TracePanel>(emptyTracePanel);
   const [error, setError] = useState("");
+  const traceController = useRef(createTraceRefreshController(() => getOAuthTrace(), () => new Date(), setTracePanel));
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query), 250);
@@ -44,13 +54,9 @@ function AdminHome() {
   useEffect(() => {
     if (!user?.id) return;
     let cancelled = false;
-    getOAuthTrace()
-      .then((rows) => {
-        if (!cancelled) setTrace(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setTrace([]);
-      });
+    void traceController.current.refresh().then(() => {
+      if (cancelled) return;
+    });
     return () => {
       cancelled = true;
     };
@@ -138,18 +144,28 @@ function AdminHome() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold">אבחון חיבור Instagram</h2>
-            <p className="mt-1 text-sm leading-relaxed text-muted">
-              היומן נשמר רק בזיכרון התהליך, עד שעתיים או 40 אירועים, ונמחק בהפעלה מחדש. אין כאן אסימונים, מזהים או רשימת הרשאות.
-            </p>
-            {trace.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold">אבחון חיבור Instagram</h2>
+              <Button variant="secondary" size="sm" disabled={tracePanel.loading} aria-busy={tracePanel.loading} onClick={() => void traceController.current.refresh()}>
+                {tracePanel.loading ? "מרעננים…" : "רענון יומן האבחון"}
+              </Button>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-muted">{TRACE_MEMORY_WARNING}</p>
+            <p className="mt-2 text-sm text-muted">היומן מוגבל ל-40 אירועים ולשעתיים. אין כאן אסימונים, מזהים או רשימת הרשאות.</p>
+            {tracePanel.refreshedAt ? (
+              <p className="mt-2 text-sm text-muted">
+                עודכן לאחרונה: <span dir="ltr">{tracePanel.refreshedAt}</span>
+              </p>
+            ) : null}
+            {tracePanel.loadError ? <p className="mt-2 text-sm text-danger">{tracePanel.loadError}</p> : null}
+            {tracePanel.rows.length === 0 ? (
               <p className="mt-2 text-sm text-muted">עדיין אין אירועים בתהליך הזה.</p>
             ) : (
               <ul className="mt-3 grid gap-2">
-                {trace.map((entry, index) => (
+                {tracePanel.rows.map((entry, index) => (
                   <li key={`${entry.at}-${entry.operation}-${index}`} className="rounded-2xl bg-surface px-4 py-3 text-sm shadow-card">
                     <p dir="ltr" className="text-muted">{entry.at}</p>
-                    <p className="mt-1 font-medium">{traceOperationLabel(entry.operation)} · {entry.result === "success" ? "הצליח" : "נכשל"}</p>
+                    <p className="mt-1 font-medium">{traceOperationLabel(entry.operation)} · {traceResultLabel(entry.result)}</p>
                     <p dir="ltr" className="mt-1 text-muted">{entry.grantStatus} · {entry.grantSource} · permissions {entry.permissionsPresent ? "yes" : "no"}</p>
                   </li>
                 ))}
@@ -209,19 +225,6 @@ function AdminHome() {
       ) : null}
     </div>
   );
-}
-
-function traceOperationLabel(operation: string): string {
-  const labels: Record<string, string> = {
-    instagram_callback: "סיום כניסת Instagram",
-    permissions_field: "שדה permissions בתשובת Meta",
-    pending_saved: "שמירה זמנית",
-    authorization_confirmed: "אישור עדכון ההרשאה",
-    payload_transferred: "העברה לחיבור השמור",
-    instagram_renew: "חידוש אסימון",
-    permissions_checked: "בדיקת הרשאות",
-  };
-  return labels[operation] ?? operation;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

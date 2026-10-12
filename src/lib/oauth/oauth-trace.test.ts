@@ -11,6 +11,7 @@ import {
   readOAuthTrace,
   recordOAuthTrace,
 } from "./oauth-trace.ts";
+import { TRACE_MEMORY_WARNING, TRACE_REFRESH_ERROR, createTraceRefreshController, traceOperationLabel, traceResultLabel } from "./oauth-trace-view.ts";
 
 (globalThis as { __pgBootstrapPromise__?: Promise<void> }).__pgBootstrapPromise__ = Promise.resolve();
 
@@ -241,6 +242,72 @@ describe("oauth diagnostic trace", () => {
     assert.match(source, /resolveAdminAccess/);
     assert.match(source, /oauthTraceForAdmin/);
     assert.doesNotMatch(source, /localStorage/);
+    const page = readFileSync(new URL("../../routes/admin/index.tsx", import.meta.url), "utf8");
+    assert.match(page, /רענון יומן האבחון/);
+    assert.match(page, /getOAuthTrace\(\)/);
+    assert.match(page, /createTraceRefreshController/);
+    assert.match(page, /TRACE_MEMORY_WARNING/);
+    assert.equal(TRACE_MEMORY_WARNING, "היומן נשמר בזיכרון השרת בלבד. אירועים עשויים להיעלם לאחר הפעלה מחדש או להופיע באופן חלקי כאשר הבקשות מטופלות בשרתים שונים. היעדר אירוע אינו מוכיח שהפעולה לא בוצעה.");
+    assert.doesNotMatch(page, /setInterval/);
+  });
+
+  it("refreshes the admin trace once, keeps rows after an error, and records the refresh time", async () => {
+    const row = {
+      at: "2026-10-12T14:20:00.000Z",
+      operation: "payload_transferred",
+      result: "success",
+      grantStatus: "permissions_confirmed",
+      grantSource: "oauth_exchange",
+      permissionsPresent: true,
+    };
+    const later = {
+      ...row,
+      at: "2026-10-12T14:28:01.000Z",
+      operation: "permissions_checked",
+      result: "error",
+      grantStatus: "permissions_unknown",
+      grantSource: "preserved_on_refresh",
+      permissionsPresent: false,
+    };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const clock = new Date("2026-10-12T14:28:01.000Z");
+    const controller = createTraceRefreshController(async () => {
+      calls += 1;
+      await gate;
+      return [later, row];
+    }, () => clock);
+    const first = controller.refresh();
+    assert.equal(controller.panel.loading, true);
+    const blocked = await controller.refresh();
+    assert.equal(calls, 1);
+    assert.equal(blocked.loading, true);
+    assert.equal(blocked.rows.length, 0);
+    release();
+    const loaded = await first;
+    assert.equal(calls, 1);
+    assert.deepEqual(loaded.rows.map((entry) => entry.at), ["2026-10-12T14:20:00.000Z", "2026-10-12T14:28:01.000Z"]);
+    assert.equal(loaded.refreshedAt, "2026-10-12T14:28:01.000Z");
+    assert.equal(loaded.loadError, null);
+    assert.equal(traceOperationLabel("instagram_renew"), "חידוש אסימון");
+    assert.equal(traceResultLabel("success"), "הצליח");
+    assert.equal(traceResultLabel("error"), "נכשל");
+
+    let fail = false;
+    const durable = createTraceRefreshController(async () => {
+      if (fail) throw new Error("short-lived-token");
+      return [row];
+    }, () => clock);
+    const saved = await durable.refresh();
+    fail = true;
+    const kept = await durable.refresh();
+    assert.deepEqual(kept.rows, saved.rows);
+    assert.equal(kept.refreshedAt, saved.refreshedAt);
+    assert.equal(kept.loadError, TRACE_REFRESH_ERROR);
+    assert.equal(JSON.stringify(kept).includes("short-lived-token"), false);
   });
 
   it("records oauth, confirmation and the permission check", async () => {
