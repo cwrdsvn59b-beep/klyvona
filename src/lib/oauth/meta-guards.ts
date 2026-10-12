@@ -265,6 +265,56 @@ export function assessInstagramLookup(input: {
   return { status: username ? "connected" : "missing_username", publishUserId: resolved.userId, username, persist: false };
 }
 
+export type InstagramVerifyCheck =
+  | "identity_confirmed"
+  | "identity_unconfirmed"
+  | "identity_mismatch"
+  | "reconnect"
+  | "temporary_error";
+
+/** A /me response can confirm identity. It does not prove the publish permission. */
+export function instagramVerifyVerdict(input: {
+  storedId: string;
+  tokenReadable: boolean;
+  failure: "none" | "auth" | "temporary";
+  profile: { userId: string | null; appScopedId: string | null; username: string; accountType: string | null } | null;
+  appIds: readonly string[];
+}): {
+  check: InstagramVerifyCheck;
+  username: string | null;
+  identityConfirmed: boolean;
+  tokenSaved: boolean;
+  publishingAllowed: false;
+  publishing: "not_verified";
+  accountEligible: boolean;
+} {
+  const base = { publishingAllowed: false as const, publishing: "not_verified" as const };
+  const username = instagramUsername(input.profile?.username);
+  const accountEligible = instagramAccountEligible(input.profile?.accountType ?? null);
+  if (!input.tokenReadable) {
+    return { ...base, check: "reconnect", username: null, identityConfirmed: false, tokenSaved: false, accountEligible: false };
+  }
+  if (input.failure === "temporary") {
+    return { ...base, check: "temporary_error", username: null, identityConfirmed: false, tokenSaved: true, accountEligible: false };
+  }
+  if (input.failure === "auth") {
+    return { ...base, check: "reconnect", username: null, identityConfirmed: false, tokenSaved: true, accountEligible: false };
+  }
+  const resolved = resolveInstagramAccount({
+    tokenUserId: null,
+    profileUserId: input.profile?.userId ?? null,
+    profileAppScopedId: input.profile?.appScopedId ?? null,
+    appIds: input.appIds,
+  });
+  if (!resolved.ok || !accountEligible) {
+    return { ...base, check: "identity_unconfirmed", username, identityConfirmed: false, tokenSaved: true, accountEligible };
+  }
+  if (resolved.userId !== input.storedId.trim()) {
+    return { ...base, check: "identity_mismatch", username, identityConfirmed: false, tokenSaved: true, accountEligible };
+  }
+  return { ...base, check: "identity_confirmed", username, identityConfirmed: true, tokenSaved: true, accountEligible: true };
+}
+
 export function instagramAccountEligible(accountType: string | null): boolean {
   if (!accountType) return false;
   const value = accountType.toUpperCase();

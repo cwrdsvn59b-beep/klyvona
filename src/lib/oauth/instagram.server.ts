@@ -16,6 +16,7 @@ import {
   instagramConfigProblem,
   instagramConnectReturn,
   instagramUsername,
+  instagramVerifyVerdict,
   preserveInstagramIds,
   readInstagramProfile,
   readInstagramShortToken,
@@ -67,6 +68,26 @@ function noStore(body: unknown, status = 200, extra?: Headers): Response {
   headers.set("cache-control", "no-store");
   headers.set("content-type", "application/json");
   return new Response(JSON.stringify(body), { status, headers });
+}
+
+export class InstagramRequestError extends Error {
+  readonly kind: "auth" | "temporary";
+  constructor(kind: "auth" | "temporary") {
+    super(kind === "auth" ? "instagram_auth" : "instagram_temporary");
+    this.kind = kind;
+  }
+}
+
+function instagramFailureKind(status: number, body: Record<string, unknown>): "auth" | "temporary" | null {
+  if (status >= 200 && status < 300 && typeof body.error !== "object" && typeof body.error_message !== "string") return null;
+  const error = body.error && typeof body.error === "object" ? (body.error as Record<string, unknown>) : {};
+  const code = Number(error.code);
+  const message = `${typeof error.message === "string" ? error.message : ""} ${typeof body.error_message === "string" ? body.error_message : ""}`;
+  if (code === 4 || code === 17 || code === 32 || code === 613 || status === 429 || status >= 500) return "temporary";
+  if (status === 401 || status === 403 || code === 190 || /invalid oauth access token|session has expired|error validating access token/i.test(message)) {
+    return "auth";
+  }
+  return "temporary";
 }
 
 async function readInstagramJson(response: Response): Promise<Record<string, unknown>> {
@@ -126,9 +147,24 @@ export const liveInstagramGraph: InstagramGraph = {
   },
   async profile(token) {
     const url = new URL(`${INSTAGRAM_GRAPH_URL}/me`);
-    url.searchParams.set("fields", "user_id,username,account_type");
+    url.searchParams.set("fields", "user_id,username,account_type,id");
     url.searchParams.set("access_token", token);
-    return readInstagramProfile(await readInstagramJson(await fetch(url)));
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch {
+      throw new InstagramRequestError("temporary");
+    }
+    const raw = await response.text();
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(preserveInstagramIds(raw)) as Record<string, unknown>;
+    } catch {
+      throw new InstagramRequestError("temporary");
+    }
+    const kind = instagramFailureKind(response.status, body);
+    if (kind) throw new InstagramRequestError(kind);
+    return readInstagramProfile(body);
   },
 };
 
@@ -146,9 +182,9 @@ function stateCookie(id: string, request: Request): string {
   return `${STATE_COOKIE}=${encodeURIComponent(id)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}`;
 }
 
-async function clientForSecret(reference: string, connectSecret: string) {
-  const sql = await getSql();
-  const rows = await sql<{ id: string; connect_secret_hash: string | null }>`
+async function clientForSecret(reference: string, connectSecret: string, sql?: Sql) {
+  const db = sql ?? (await getSql());
+  const rows = await db<{ id: string; connect_secret_hash: string | null }>`
     select id, connect_secret_hash from clients where reference_code = ${reference} limit 1
   `;
   const row = rows[0];
@@ -156,7 +192,7 @@ async function clientForSecret(reference: string, connectSecret: string) {
   return row;
 }
 
-async function readConnectBody(request: Request) {
+async function readConnectBody(request: Request, sql?: Sql) {
   let body: { reference?: unknown; connectSecret?: unknown; platform?: unknown };
   try {
     body = (await request.json()) as typeof body;
@@ -164,7 +200,7 @@ async function readConnectBody(request: Request) {
     return null;
   }
   if (typeof body.reference !== "string" || typeof body.connectSecret !== "string") return null;
-  const client = await clientForSecret(body.reference.trim(), body.connectSecret);
+  const client = await clientForSecret(body.reference.trim(), body.connectSecret, sql);
   if (!client) return null;
   return { client, platform: body.platform === "instagram" ? "instagram" : "" };
 }
@@ -346,6 +382,46 @@ export async function previewInstagramIdentity(
     return assessInstagramLookup({ storedId: input.storedId, tokenReadable: true, lookup: "ok", profile, appIds });
   } catch {
     return assessInstagramLookup({ storedId: input.storedId, tokenReadable: true, lookup: "failed", profile: null, appIds });
+  }
+}
+
+/** Explicit identity check. Does not update the stored id, token, or connection status. */
+export async function verifyInstagramIdentity(
+  request: Request,
+  graph: InstagramGraph = liveInstagramGraph,
+  sql?: Sql,
+): Promise<Response> {
+  if (instagramConfigProblem()) return disabled();
+  const db = sql ?? (await getSql());
+  const parsed = await readConnectBody(request, db);
+  if (!parsed) return noStore({ error: "unauthorized" }, 401);
+  const rows = await db<{ external_account_id: string | null; token_ciphertext: string | null }>`
+    select external_account_id, token_ciphertext from social_accounts
+    where client_id = ${parsed.client.id} and platform = ${"instagram"} limit 1
+  `;
+  const row = rows[0];
+  const storedId = row?.external_account_id ?? "";
+  const appIds = configuredAppIds();
+  if (!row?.token_ciphertext) {
+    return noStore({ ...instagramVerifyVerdict({ storedId, tokenReadable: false, failure: "none", profile: null, appIds }), persist: false });
+  }
+  let token = "";
+  try {
+    const saved = JSON.parse(await openSecret(row.token_ciphertext)) as { userToken?: unknown };
+    token = typeof saved.userToken === "string" ? saved.userToken : "";
+  } catch {
+    token = "";
+  }
+  if (!token) {
+    return noStore({ ...instagramVerifyVerdict({ storedId, tokenReadable: false, failure: "none", profile: null, appIds }), persist: false });
+  }
+  try {
+    const profile = await graph.profile(token);
+    return noStore({ ...instagramVerifyVerdict({ storedId, tokenReadable: true, failure: "none", profile, appIds }), persist: false });
+  } catch (error) {
+    const failure = error instanceof InstagramRequestError && error.kind === "auth" ? "auth" : "temporary";
+    console.error("[instagram] verify failed", failure);
+    return noStore({ ...instagramVerifyVerdict({ storedId, tokenReadable: true, failure, profile: null, appIds }), persist: false });
   }
 }
 

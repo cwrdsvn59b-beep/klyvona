@@ -185,11 +185,12 @@ describe("instagram identity against a test database", () => {
         }),
         sql,
       );
-      const body = await listed.json() as { connected: Array<{ name?: string; externalAccountId: string; trusted: boolean }> };
+      const body = await listed.json() as { connected: Array<{ name?: string; externalAccountId: string; trusted: boolean; status?: string }> };
       const encoded = JSON.stringify(body);
       assert.equal(body.connected[0]?.name, "klyvona_business");
       assert.equal(body.connected[0]?.externalAccountId, PROFESSIONAL_ID);
-      assert.equal(body.connected[0]?.trusted, true);
+      assert.equal(body.connected[0]?.trusted, false);
+      assert.equal(body.connected[0]?.status, "connected");
       assert.equal(encoded.includes(INSTAGRAM_APP_ID), false);
       assert.equal(encoded.includes(META_APP_ID), false);
       assert.equal(encoded.includes("long-lived-token"), false);

@@ -381,7 +381,7 @@ export async function listPendingAccounts(request: Request, sql?: Sql): Promise<
       platform: row.platform,
       externalAccountId: shown.externalAccountId,
       name: shown.name,
-      trusted: shown.trusted,
+      trusted: false,
       status: shown.status,
     });
   }

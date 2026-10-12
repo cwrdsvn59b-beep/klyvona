@@ -256,10 +256,10 @@ describe("instagram login", () => {
     assert.equal(lookedUp.status, "connected");
     assert.equal(assessInstagramLookup({ storedId: professional, tokenReadable: true, lookup: "failed", profile: null, appIds: [appId] }).status, "missing_username");
     assert.equal(configuredAppIds({ INSTAGRAM_APP_ID: appId, META_APP_ID: metaAppId } as NodeJS.ProcessEnv).includes(metaAppId), true);
-    assert.equal(instagramCardText({ externalAccountId: professional, status: "missing_username" }).label, "מחובר");
+    assert.equal(instagramCardText({ externalAccountId: professional, status: "missing_username" }).label, "הטוקן נשמר");
+    assert.equal(instagramCardText({ externalAccountId: professional, name: "klyvona_business", status: "connected" }).tone, "warn");
     assert.equal(instagramCardText({ externalAccountId: "", status: "unconfirmed" }).label, "הזהות לא אומתה");
     assert.equal(instagramCardText({ externalAccountId: professional, status: "reconnect" }).label, "נדרשת הרשאה מחדש");
-    assert.equal(instagramCardText({ externalAccountId: professional, name: "klyvona_business", status: "connected" }).detail, "@klyvona_business");
   });
 });
 

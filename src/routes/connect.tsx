@@ -12,6 +12,7 @@ import {
   connectResultAccepted,
   connectedFromBody,
   instagramCardText,
+  instagramVerifyText,
   instagramConnectLists,
   readConnectReceipt,
   type ConnectReceipt,
@@ -129,6 +130,27 @@ function ConnectPage() {
     }
   }
 
+  async function verifyInstagram() {
+    setBusy(true);
+    try {
+      const result = await post("/api/oauth/instagram/verify");
+      if (!result || result.networkError) {
+        setMessage("שגיאה זמנית בבדיקה.", "info");
+        return;
+      }
+      if (!connectResultAccepted(result, "verify")) {
+        setMessage(result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לאמת את הזהות.");
+        return;
+      }
+      const text = instagramVerifyText(result.body);
+      setMessage(text.message, text.tone);
+    } catch {
+      setMessage("שגיאה זמנית בבדיקה.", "info");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function choose(id: string) {
     if (savingRef.current) return;
     savingRef.current = true;
@@ -201,6 +223,9 @@ function ConnectPage() {
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => load()}>
             הצגת חשבונות שאושרו
+          </Button>
+          <Button variant="secondary" disabled={busy || connected.length === 0} onClick={() => verifyInstagram()}>
+            בדיקת חיבור Instagram
           </Button>
           {connected.map((item) => {
             const card = instagramCardText(item);

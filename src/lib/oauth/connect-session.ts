@@ -111,10 +111,15 @@ export function instagramCardText(item: {
   if (item.status === "unconfirmed" || (!item.status && !item.externalAccountId)) {
     return { title: "Instagram", detail: "הזהות לא אומתה. החשבון לא נותק.", tone: "warn", label: "הזהות לא אומתה" };
   }
-  if (item.status === "missing_username" || !item.name) {
-    return { title: "Instagram", detail: item.externalAccountId, tone: "ok", label: "מחובר" };
+  if (item.status === "connected" || item.status === "missing_username" || item.externalAccountId) {
+    return {
+      title: item.name || "Instagram",
+      detail: item.name ? `@${item.name}` : item.externalAccountId,
+      tone: "warn",
+      label: "הטוקן נשמר",
+    };
   }
-  return { title: item.name, detail: `@${item.name}`, tone: "ok", label: "מחובר" };
+  return { title: "Instagram", detail: "הזהות לא אומתה. החשבון לא נותק.", tone: "warn", label: "הזהות לא אומתה" };
 }
 
 export function connectedFromBody(body: Record<string, unknown>): ListedConnected[] {
@@ -152,7 +157,7 @@ export async function readConnectBody(
   }
 }
 
-export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect";
+export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect" | "verify";
 export type ConnectNoticeTone = "error" | "ok" | "info";
 
 export function connectNoticeClass(tone: ConnectNoticeTone): string {
@@ -175,7 +180,27 @@ export function connectResultAccepted(result: ConnectCall, action: ConnectAction
   }
   if (action === "accounts") return Array.isArray(body.accounts) && Array.isArray(body.connected);
   if (action === "select" || action === "disconnect") return body.ok === true && typeof body.platform === "string" && body.platform.length > 0;
+  if (action === "verify") {
+    return body.publishingAllowed === false && body.publishing === "not_verified" && typeof body.check === "string";
+  }
   return body.ok === true;
+}
+
+const VERIFY_TEXT: Record<string, { message: string; tone: ConnectNoticeTone }> = {
+  identity_confirmed: { message: "חשבון Instagram אומת.", tone: "ok" },
+  identity_unconfirmed: { message: "לא ניתן לאמת את הזהות.", tone: "error" },
+  identity_mismatch: { message: "מזהה Instagram אינו תואם למזהה שנשמר.", tone: "error" },
+  reconnect: { message: "נדרשת הרשאה מחדש.", tone: "error" },
+  temporary_error: { message: "שגיאה זמנית בבדיקה.", tone: "info" },
+};
+
+/** The check result is separate from the saved-token card. Publishing stays unverified. */
+export function instagramVerifyText(body: Record<string, unknown>): { message: string; tone: ConnectNoticeTone } {
+  const found = VERIFY_TEXT[typeof body.check === "string" ? body.check : ""] ?? VERIFY_TEXT.identity_unconfirmed;
+  const username = typeof body.username === "string" ? body.username.trim().replace(/^@/, "") : "";
+  const named = username && body.check === "identity_confirmed" ? `${found.message} @${username}` : found.message;
+  if (body.check === "identity_confirmed") return { message: `${named} הפרסום עדיין לא אושר.`, tone: "ok" };
+  return { message: named, tone: found.tone };
 }
 
 export async function callConnect(
