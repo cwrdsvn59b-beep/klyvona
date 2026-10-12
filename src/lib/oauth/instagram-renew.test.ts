@@ -59,6 +59,16 @@ describe("instagram renew target", () => {
     assert.equal(carried.tokenPayload.grantStatus, "permissions_confirmed");
     assert.equal(carried.tokenPayload.grantSource, "preserved_on_refresh");
     assert.deepEqual(carried.tokenPayload.grantedPermissions, previous.grantedPermissions);
+    const unknown = instagramRenewWrite({
+      accessToken: "refreshed-token",
+      igUserId: "1789",
+      expiresIn: 60,
+      now,
+      previous: { v: 2, userToken: "old-token", igUserId: "1789", grantStatus: "permissions_unknown", grantSource: "oauth_exchange" },
+    });
+    assert.equal(unknown.tokenPayload.grantStatus, "permissions_unknown");
+    assert.equal(unknown.tokenPayload.grantSource, "preserved_on_refresh");
+    assert.equal(unknown.tokenPayload.grantedPermissions, undefined);
     const untouched = instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: 60, now, previous: { v: 2, userToken: "old-token", igUserId: "1789" } });
     assert.equal(untouched.tokenPayload.grantStatus, undefined);
     const key = process.env.TOKEN_ENCRYPTION_KEY;

@@ -151,14 +151,21 @@ export type InstagramGrantStatus = "permissions_confirmed" | "permissions_missin
 
 const INSTAGRAM_SCOPE_NAME = /^[a-z0-9_]{1,64}$/;
 
-/** Parses the documented comma-separated permissions string. Any other shape is unknown, not a denial. */
+/** Parses the documented permissions list. A missing or unreadable shape stays unknown, not a denial. */
 export function readInstagramGrant(value: unknown): { status: InstagramGrantStatus; granted: string[] } {
-  if (typeof value !== "string" || value.trim() === "") return { status: "permissions_unknown", granted: [] };
-  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  const text = instagramPermissionText(value);
+  if (text == null || text.trim() === "") return { status: "permissions_unknown", granted: [] };
+  const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
   if (parts.length === 0 || parts.some((part) => !INSTAGRAM_SCOPE_NAME.test(part))) return { status: "permissions_unknown", granted: [] };
   const granted = [...new Set(parts)];
   if (granted.includes("instagram_business_content_publish")) return { status: "permissions_confirmed", granted };
   return { status: "permissions_missing", granted };
+}
+
+function instagramPermissionText(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return value.join(",");
+  return null;
 }
 
 export function readStoredInstagramGrant(payload: unknown): {
@@ -186,11 +193,12 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
   const accessToken = typeof row.access_token === "string" ? row.access_token : "";
   const userId = readInstagramUserId(row.user_id);
   if (!accessToken || !userId) return null;
+  const permissions = row.permissions != null ? row.permissions : record !== row ? record.permissions : undefined;
   return {
     accessToken,
     userId,
-    grant: readInstagramGrant("permissions" in row ? row.permissions : undefined),
-    permissionsPresent: "permissions" in row && row.permissions != null,
+    grant: readInstagramGrant(permissions),
+    permissionsPresent: permissions != null,
   };
 }
 

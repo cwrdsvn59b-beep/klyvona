@@ -209,10 +209,21 @@ describe("instagram login", () => {
     );
     assert.equal(readInstagramGrant("instagram_business_basic").status, "permissions_missing");
     assert.equal(readInstagramGrant(undefined).status, "permissions_unknown");
-    assert.equal(readInstagramGrant(["instagram_business_content_publish"]).status, "permissions_unknown");
+    assert.deepEqual(readInstagramGrant(["instagram_business_basic", "instagram_business_content_publish"]), {
+      status: "permissions_confirmed",
+      granted: ["instagram_business_basic", "instagram_business_content_publish"],
+    });
+    assert.equal(readInstagramGrant(["instagram_business_content_publish", 1]).status, "permissions_unknown");
     assert.equal(readInstagramGrant("not a scope").status, "permissions_unknown");
     assert.equal(readInstagramShortToken({ access_token: "short", user_id: "1789" })?.grant.status, "permissions_unknown");
     assert.equal(readInstagramShortToken({ access_token: "short", user_id: "1789" })?.permissionsPresent, false);
+    assert.equal(
+      readInstagramShortToken({
+        data: [{ access_token: "short", user_id: "1789" }],
+        permissions: ["instagram_business_basic", "instagram_business_content_publish"],
+      })?.grant.status,
+      "permissions_confirmed",
+    );
     assert.deepEqual(readStoredInstagramGrant({ v: 2, userToken: "old-token", igUserId: "1789" }), {
       status: "permissions_unknown",
       source: "not_stored",

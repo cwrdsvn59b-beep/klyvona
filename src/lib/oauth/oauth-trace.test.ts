@@ -368,7 +368,8 @@ describe("oauth diagnostic trace", () => {
       const renewed = trace.find((entry) => entry.operation === "instagram_renew");
       const checked = trace.filter((entry) => entry.operation === "permissions_checked").at(-1);
       assert.equal(renewed?.grantSource, "preserved_on_refresh");
-      assert.equal(renewed?.permissionsPresent, false);
+      assert.equal(renewed?.grantStatus, "permissions_confirmed");
+      assert.equal(renewed?.permissionsPresent, true);
       assert.equal(checked?.grantSource, "preserved_on_refresh");
       assert.equal(checked?.grantStatus, "permissions_confirmed");
       assertNoSecrets(trace);

@@ -594,7 +594,7 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
       return noStore({ ok: false, error: "token_replaced", kept: true }, 409);
     }
     const written = traceFromStored(record.tokenPayload);
-    recordOAuthTrace({ operation: "instagram_renew", result: "success", ...written, permissionsPresent: false });
+    recordOAuthTrace({ operation: "instagram_renew", result: "success", ...written });
     return noStore({ ok: true });
   } catch (error) {
     console.error("[instagram] renew failed", error instanceof Error ? error.message : "error");
