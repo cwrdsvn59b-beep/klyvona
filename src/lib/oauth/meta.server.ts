@@ -8,9 +8,11 @@ import {
   classifyAccounts,
   evaluateOAuthState,
   facebookAuthorizeUrl,
+  customerAccountConfigProblem,
   metaConfigProblem,
   secretMatches,
   selectionAllowed,
+  selectionWriteSucceeded,
   sha256Hex,
   visiblePendingAccounts,
 } from "@/lib/oauth/meta-guards";
@@ -313,7 +315,7 @@ export async function finishMetaOAuth(
 }
 
 export async function listPendingAccounts(request: Request): Promise<Response> {
-  if (metaConfigProblem()) return disabled("meta");
+  if (customerAccountConfigProblem()) return disabled("instagram");
   const parsed = await readConnectBody(request);
   if (!parsed) return noStore({ error: "unauthorized" }, 401);
   const sql = await getSql();
@@ -373,7 +375,7 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
 }
 
 export async function selectPendingAccount(request: Request): Promise<Response> {
-  if (metaConfigProblem()) return disabled("meta");
+  if (customerAccountConfigProblem()) return disabled("instagram");
   const parsed = await readConnectBody(request);
   if (!parsed?.pendingId) return noStore({ error: "unauthorized" }, 401);
   const sql = await getSql();
@@ -399,7 +401,7 @@ export async function selectPendingAccount(request: Request): Promise<Response> 
     expired: new Date(pending.expires_at).getTime() <= Date.now(),
   });
   if (verdict !== "ok" || !pending.token_ciphertext) return noStore({ error: verdict }, 403);
-  await sql`
+  const updated = await sql<{ platform: string }>`
     update social_accounts
     set status = 'connected',
         external_account_id = ${pending.external_account_id},
@@ -408,9 +410,11 @@ export async function selectPendingAccount(request: Request): Promise<Response> 
         connected_at = now(),
         last_error = null
     where client_id = ${parsed.client.id} and platform = ${pending.platform}
+    returning platform
   `;
+  if (!selectionWriteSucceeded(updated)) return noStore({ error: "not_saved" }, 409);
   await sql`delete from oauth_pending_accounts where id = ${parsed.pendingId}`;
-  return noStore({ ok: true, platform: pending.platform });
+  return noStore({ ok: true, platform: updated[0].platform });
 }
 
 export async function disconnectMeta(request: Request): Promise<Response> {

@@ -1,11 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { sealSecret, openSecret } from "../crypto/tokens.server.ts";
 import {
   INSTAGRAM_SCOPES,
   classifyAccounts,
   evaluateOAuthState,
   facebookAuthorizeUrl,
+  customerAccountConfigProblem,
   instagramAccountEligible,
   instagramAuthorizeUrl,
   instagramCallbackOutcome,
@@ -15,6 +17,7 @@ import {
   readInstagramShortToken,
   secretMatches,
   selectionAllowed,
+  selectionWriteSucceeded,
   sha256Hex,
   visiblePendingAccounts,
 } from "./meta-guards.ts";
@@ -195,6 +198,39 @@ describe("instagram login", () => {
     assert.equal(instagramAccountEligible("BUSINESS"), true);
     assert.equal(instagramAccountEligible("MEDIA_CREATOR"), true);
     assert.equal(instagramAccountEligible("PERSONAL"), false);
+    assert.equal(instagramAccountEligible(null), false);
+    assert.equal(instagramAccountEligible(""), false);
+    assert.equal(instagramAccountEligible("UNKNOWN"), false);
+  });
+});
+
+describe("instagram account save", () => {
+  it("does not require the Facebook app to list or save an Instagram account", () => {
+    const env = {
+      INSTAGRAM_APP_ID: "ig-app",
+      INSTAGRAM_APP_SECRET: "ig-secret",
+      TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
+    } as NodeJS.ProcessEnv;
+    assert.equal(customerAccountConfigProblem(env), null);
+    assert.match(metaConfigProblem(env) ?? "", /Meta app credentials/);
+    const source = readFileSync(new URL("./meta.server.ts", import.meta.url), "utf8");
+    const list = source.slice(source.indexOf("export async function listPendingAccounts"), source.indexOf("export async function selectPendingAccount"));
+    const select = source.slice(source.indexOf("export async function selectPendingAccount"), source.indexOf("export async function disconnectMeta"));
+    assert.match(list, /customerAccountConfigProblem/);
+    assert.doesNotMatch(list, /metaConfigProblem/);
+    assert.match(select, /customerAccountConfigProblem/);
+    assert.doesNotMatch(select, /metaConfigProblem/);
+  });
+
+  it("does not report success when the account row was not updated", () => {
+    assert.equal(selectionWriteSucceeded([]), false);
+    assert.equal(selectionWriteSucceeded([{ platform: "" }]), false);
+    assert.equal(selectionWriteSucceeded([{ platform: "instagram" }]), true);
+    const source = readFileSync(new URL("./meta.server.ts", import.meta.url), "utf8");
+    const select = source.slice(source.indexOf("export async function selectPendingAccount"), source.indexOf("export async function disconnectMeta"));
+    assert.match(select, /returning platform/);
+    assert.match(select, /selectionWriteSucceeded/);
+    assert.match(select, /not_saved/);
   });
 });
 
