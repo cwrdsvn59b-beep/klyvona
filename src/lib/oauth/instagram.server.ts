@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { instagramRenewWrite } from "@/lib/oauth/instagram-renew";
-import { getSql } from "@/lib/db";
+import { getSql, type Sql } from "@/lib/db";
+import { instagramRenewWrite, instagramTokenPayload } from "@/lib/oauth/instagram-renew";
 import { openSecret, sealSecret } from "@/lib/crypto/tokens.server";
 import {
   INSTAGRAM_GRAPH_URL,
   INSTAGRAM_TOKEN_URL,
   OAUTH_STATE_TTL_MS,
+  configuredAppIds,
   evaluateOAuthState,
   instagramAccountEligible,
   instagramAuthorizeUrl,
@@ -13,6 +14,7 @@ import {
   instagramCallbackUrl,
   instagramConfigProblem,
   instagramConnectReturn,
+  instagramUsername,
   preserveInstagramIds,
   readInstagramProfile,
   readInstagramShortToken,
@@ -36,7 +38,7 @@ export type InstagramGraph = {
     appSecret: string;
   }): Promise<{ accessToken: string; expiresIn: number | null }>;
   refresh(token: string): Promise<{ accessToken: string; expiresIn: number | null }>;
-  profile(token: string): Promise<{ username: string; accountType: string | null; userId: string | null }>;
+  profile(token: string): Promise<{ username: string; accountType: string | null; userId: string | null; appScopedId: string | null }>;
 };
 
 function appCredentials() {
@@ -206,6 +208,7 @@ export async function startInstagramOAuth(request: Request): Promise<Response> {
 export async function finishInstagramOAuth(
   request: Request,
   graph: InstagramGraph = liveInstagramGraph,
+  sql?: Sql,
 ): Promise<Response> {
   const url = new URL(request.url);
   const outcome = instagramCallbackOutcome(url.searchParams);
@@ -221,8 +224,8 @@ export async function finishInstagramOAuth(
   const code = rawCode?.replace(/#_$/, "") ?? "";
   if (!parsed || !code) return back("state");
 
-  const sql = await getSql();
-  const rows = await sql<{
+  const db = sql ?? (await getSql());
+  const rows = await db<{
     client_id: string;
     nonce_hash: string;
     expires_at: string;
@@ -244,7 +247,7 @@ export async function finishInstagramOAuth(
   });
   if (verdict !== "ok" || !row || row.platform !== "instagram") return back(verdict === "ok" ? "state" : verdict);
 
-  const consumed = await sql<{ id: string }>`
+  const consumed = await db<{ id: string }>`
     update oauth_states set used_at = now()
     where id = ${parsed.id} and used_at is null
     returning id
@@ -259,16 +262,19 @@ export async function finishInstagramOAuth(
     const identity = resolveInstagramAccount({
       tokenUserId: shortLived.userId,
       profileUserId: profile.userId,
-      appId,
+      profileAppScopedId: profile.appScopedId,
+      appIds: configuredAppIds(),
     });
     if (!identity.ok) throw new Error("instagram_identity_rejected");
+    const username = instagramUsername(profile.username);
     const eligible = instagramAccountEligible(profile.accountType);
     const packed = eligible
-      ? await sealSecret(JSON.stringify({ v: 2, userToken: longLived.accessToken, igUserId: identity.userId }))
+      ? await sealSecret(JSON.stringify(instagramTokenPayload({ accessToken: longLived.accessToken, igUserId: identity.userId, username })))
       : null;
     const expiresAt = longLived.expiresIn ? new Date(Date.now() + longLived.expiresIn * 1000).toISOString() : null;
     const pendingUntil = new Date(Date.now() + PENDING_TTL_MS).toISOString();
-    const existing = await sql<{ id: string }>`
+    const displayName = username || identity.userId;
+    const existing = await db<{ id: string }>`
       select id from oauth_pending_accounts
       where client_id = ${row.client_id}
         and platform = 'instagram'
@@ -277,10 +283,10 @@ export async function finishInstagramOAuth(
       limit 1
     `;
     if (existing[0]) {
-      await sql`
+      await db`
         update oauth_pending_accounts
         set state_id = ${parsed.id},
-            display_name = ${profile.username || identity.userId},
+            display_name = ${displayName},
             eligible = ${eligible},
             ineligible_reason = ${eligible ? null : "חשבון Instagram אינו מקצועי."},
             token_ciphertext = ${packed},
@@ -290,7 +296,7 @@ export async function finishInstagramOAuth(
         where id = ${existing[0].id} and client_id = ${row.client_id}
       `;
     } else {
-      await sql`
+      await db`
         insert into oauth_pending_accounts (
           id, client_id, state_id, platform, external_account_id, display_name,
           eligible, ineligible_reason, token_ciphertext, token_expires_at, parent_external_id, expires_at
@@ -300,7 +306,7 @@ export async function finishInstagramOAuth(
           ${parsed.id},
           ${"instagram"},
           ${identity.userId},
-          ${profile.username || identity.userId},
+          ${displayName},
           ${eligible},
           ${eligible ? null : "חשבון Instagram אינו מקצועי."},
           ${packed},
@@ -329,7 +335,7 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
   const sealed = rows[0]?.token_ciphertext;
   if (!sealed) return noStore({ error: "reconnect_required" }, 409);
   try {
-    const saved = JSON.parse(await openSecret(sealed)) as { v?: number; userToken?: string; igUserId?: string };
+    const saved = JSON.parse(await openSecret(sealed)) as { v?: number; userToken?: string; igUserId?: string; username?: string };
     if (saved.v !== 2 || !saved.userToken || !saved.igUserId) return noStore({ error: "reconnect_required" }, 409);
     const renewed = await graph.refresh(saved.userToken);
     const record = instagramRenewWrite({
@@ -337,6 +343,7 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
       igUserId: saved.igUserId,
       expiresIn: renewed.expiresIn,
       now: Date.now(),
+      username: saved.username,
     });
     const packed = await sealSecret(JSON.stringify(record.tokenPayload));
     await sql`

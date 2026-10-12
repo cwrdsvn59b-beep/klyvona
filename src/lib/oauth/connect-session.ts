@@ -97,11 +97,10 @@ export function instagramCardText(item: { name?: string; externalAccountId: stri
   title: string;
   detail: string;
 } {
-  if (item.trusted === false || !item.externalAccountId) {
+  if (item.trusted !== true || !item.name || !item.externalAccountId) {
     return { title: "Instagram", detail: "המזהה שנשמר אינו חשבון Instagram. חברו את החשבון מחדש." };
   }
-  if (item.name) return { title: item.name, detail: `@${item.name}` };
-  return { title: "Instagram", detail: item.externalAccountId };
+  return { title: item.name, detail: `@${item.name}` };
 }
 
 export function connectedFromBody(body: Record<string, unknown>): ListedConnected[] {

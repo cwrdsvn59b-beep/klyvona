@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { getSql } from "@/lib/db";
+import { getSql, type Sql } from "@/lib/db";
 import { openSecret, sealSecret } from "@/lib/crypto/tokens.server";
 import {
   META_GRAPH_URL,
   META_TOKEN_URL,
   OAUTH_STATE_TTL_MS,
   classifyAccounts,
+  configuredAppIds,
   evaluateOAuthState,
   facebookAuthorizeUrl,
   instagramConfigProblem,
@@ -14,7 +15,8 @@ import {
   selectionAllowed,
   sha256Hex,
   visiblePendingAccounts,
-  publicInstagramAccountId,
+  publicInstagramAccount,
+  usernameFromTokenPayload,
 } from "@/lib/oauth/meta-guards";
 
 const STATE_COOKIE = "klyvona_meta_oauth";
@@ -153,8 +155,7 @@ function stateCookie(id: string, request: Request): string {
   return `${STATE_COOKIE}=${encodeURIComponent(id)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}`;
 }
 
-async function clientForSecret(reference: string, connectSecret: string) {
-  const sql = await getSql();
+async function clientForSecret(reference: string, connectSecret: string, sql: Sql) {
   const rows = await sql<{ id: string; connect_secret_hash: string | null }>`
     select id, connect_secret_hash from clients where reference_code = ${reference} limit 1
   `;
@@ -163,7 +164,7 @@ async function clientForSecret(reference: string, connectSecret: string) {
   return row;
 }
 
-async function readConnectBody(request: Request) {
+async function readConnectBody(request: Request, sql: Sql) {
   let body: { reference?: unknown; connectSecret?: unknown; pendingId?: unknown; platform?: unknown };
   try {
     body = (await request.json()) as typeof body;
@@ -171,7 +172,7 @@ async function readConnectBody(request: Request) {
     return null;
   }
   if (typeof body.reference !== "string" || typeof body.connectSecret !== "string") return null;
-  const client = await clientForSecret(body.reference.trim(), body.connectSecret);
+  const client = await clientForSecret(body.reference.trim(), body.connectSecret, sql);
   if (!client) return null;
   return {
     client,
@@ -192,12 +193,12 @@ export async function startMetaOAuth(request: Request, platform: Platform): Prom
   if (!configId) return disabled(platform);
   const redirectUri = callbackUrl(request, platform);
   if (!redirectUri) return disabled(platform);
-  const parsed = await readConnectBody(request);
+  const sql = await getSql();
+  const parsed = await readConnectBody(request, sql);
   if (!parsed) return noStore({ error: "unauthorized" }, 401);
 
   const id = randomUUID();
   const nonce = randomBytes(32).toString("base64url");
-  const sql = await getSql();
   await sql`
     insert into oauth_states (id, client_id, platform, nonce_hash, expires_at)
     values (
@@ -314,12 +315,12 @@ export async function finishMetaOAuth(
   return Response.redirect(new URL("/connect?ready=1", url.origin), 303);
 }
 
-export async function listPendingAccounts(request: Request): Promise<Response> {
+export async function listPendingAccounts(request: Request, sql?: Sql): Promise<Response> {
   if (instagramConfigProblem()) return disabled("instagram");
-  const parsed = await readConnectBody(request);
+  const db = sql ?? (await getSql());
+  const parsed = await readConnectBody(request, db);
   if (!parsed) return noStore({ error: "unauthorized" }, 401);
-  const sql = await getSql();
-  const rows = await sql<{
+  const rows = await db<{
     id: string;
     platform: string;
     external_account_id: string;
@@ -333,8 +334,8 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
     from oauth_pending_accounts
     where client_id = ${parsed.client.id} and platform = 'instagram' and expires_at > now()
   `;
-  const saved = await sql<{ platform: string; external_account_id: string }>`
-    select platform, external_account_id
+  const saved = await db<{ platform: string; external_account_id: string; token_ciphertext: string | null }>`
+    select platform, external_account_id, token_ciphertext
     from social_accounts
     where client_id = ${parsed.client.id}
       and status = 'connected'
@@ -358,6 +359,28 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
       externalAccountId: row.external_account_id,
     })),
   );
+  const connected = [];
+  for (const row of saved) {
+    let username: string | null = null;
+    if (row.token_ciphertext) {
+      try {
+        username = usernameFromTokenPayload(JSON.parse(await openSecret(row.token_ciphertext)));
+      } catch {
+        username = null;
+      }
+    }
+    const shown = publicInstagramAccount({
+      storedId: row.external_account_id,
+      username,
+      appIds: configuredAppIds(),
+    });
+    connected.push({
+      platform: row.platform,
+      externalAccountId: shown.externalAccountId,
+      name: shown.name,
+      trusted: shown.trusted,
+    });
+  }
   return noStore({
     accounts: visible.map((row) => ({
       id: row.id,
@@ -367,23 +390,16 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
       reason: row.reason,
       externalAccountId: row.externalAccountId,
     })),
-    connected: saved.map((row) => {
-      const shown = publicInstagramAccountId(row.external_account_id, process.env.INSTAGRAM_APP_ID ?? "");
-      return {
-        platform: row.platform,
-        externalAccountId: shown.externalAccountId,
-        trusted: shown.trusted,
-      };
-    }),
+    connected,
   });
 }
 
-export async function selectPendingAccount(request: Request): Promise<Response> {
+export async function selectPendingAccount(request: Request, sql?: Sql): Promise<Response> {
   if (instagramConfigProblem()) return disabled("instagram");
-  const parsed = await readConnectBody(request);
+  const db = sql ?? (await getSql());
+  const parsed = await readConnectBody(request, db);
   if (!parsed?.pendingId) return noStore({ error: "unauthorized" }, 401);
-  const sql = await getSql();
-  const rows = await sql<{
+  const rows = await db<{
     client_id: string;
     platform: string;
     external_account_id: string;
@@ -406,7 +422,7 @@ export async function selectPendingAccount(request: Request): Promise<Response> 
   });
   if (pending.platform !== "instagram") return noStore({ error: "unsupported_platform" }, 403);
   if (verdict !== "ok" || !pending.token_ciphertext) return noStore({ error: verdict }, 403);
-  const updated = await sql<{ platform: string }>`
+  const updated = await db<{ platform: string }>`
     update social_accounts
     set status = 'connected',
         external_account_id = ${pending.external_account_id},
@@ -418,14 +434,14 @@ export async function selectPendingAccount(request: Request): Promise<Response> 
     returning platform
   `;
   if (!updated[0]) return noStore({ error: "missing_social_account" }, 409);
-  await sql`delete from oauth_pending_accounts where id = ${parsed.pendingId}`;
+  await db`delete from oauth_pending_accounts where id = ${parsed.pendingId}`;
   return noStore({ ok: true, platform: updated[0].platform });
 }
 
 export async function disconnectMeta(request: Request): Promise<Response> {
-  const parsed = await readConnectBody(request);
-  if (!parsed?.platform) return noStore({ error: "unauthorized" }, 401);
   const sql = await getSql();
+  const parsed = await readConnectBody(request, sql);
+  if (!parsed?.platform) return noStore({ error: "unauthorized" }, 401);
   const updated = await sql<{ platform: string }>`
     update social_accounts
     set status = 'awaiting_setup', token_ciphertext = null, token_expires_at = null,
@@ -439,10 +455,10 @@ export async function disconnectMeta(request: Request): Promise<Response> {
 
 export async function renewMeta(request: Request, graph: MetaGraph = liveMetaGraph): Promise<Response> {
   if (metaConfigProblem()) return disabled("meta");
-  const parsed = await readConnectBody(request);
+  const sql = await getSql();
+  const parsed = await readConnectBody(request, sql);
   if (!parsed?.platform) return noStore({ error: "unauthorized" }, 401);
   if (parsed.platform === "instagram") return disabled("instagram");
-  const sql = await getSql();
   const rows = await sql<{ token_ciphertext: string | null }>`
     select token_ciphertext from social_accounts
     where client_id = ${parsed.client.id} and platform = ${parsed.platform} limit 1

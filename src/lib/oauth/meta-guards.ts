@@ -159,47 +159,71 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
   return { accessToken, userId };
 }
 
+export function instagramUsername(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const name = value.trim().replace(/^@/, "");
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(name) || !/[A-Za-z]/.test(name)) return null;
+  return name;
+}
+
+export function configuredAppIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [...new Set([env.INSTAGRAM_APP_ID, env.META_APP_ID].map((id) => id?.trim() ?? "").filter((id) => /^\d{1,32}$/.test(id)))];
+}
+
 export function readInstagramProfile(payload: unknown): {
   username: string;
   accountType: string | null;
   userId: string | null;
+  appScopedId: string | null;
 } {
-  if (!payload || typeof payload !== "object") return { username: "", accountType: null, userId: null };
+  if (!payload || typeof payload !== "object") return { username: "", accountType: null, userId: null, appScopedId: null };
   const record = payload as Record<string, unknown>;
   const entry = Array.isArray(record.data) ? record.data[0] : record;
-  if (!entry || typeof entry !== "object") return { username: "", accountType: null, userId: null };
+  if (!entry || typeof entry !== "object") return { username: "", accountType: null, userId: null, appScopedId: null };
   const row = entry as Record<string, unknown>;
   return {
     username: typeof row.username === "string" ? row.username : "",
     accountType: typeof row.account_type === "string" ? row.account_type : null,
     userId: readInstagramUserId(row.user_id),
+    appScopedId: readInstagramUserId(row.id),
   };
 }
 
 /**
- * Token exchange returns an app-scoped id. Publishing uses /me user_id.
- * Those two ids are allowed to differ. Neither may be the Instagram app id.
+ * /me user_id is the professional account id. /me id is the app-scoped id and
+ * is used only when user_id is absent. Either may be skipped when it equals a
+ * configured app id. The token-exchange id is never stored by itself.
  */
 export function resolveInstagramAccount(input: {
   tokenUserId: string | null;
   profileUserId: string | null;
-  appId: string;
+  profileAppScopedId?: string | null;
+  appIds: readonly string[];
 }): { ok: true; userId: string } | { ok: false; reason: "app_id" | "missing" } {
-  const appId = input.appId.trim();
-  const profile = readInstagramUserId(input.profileUserId);
-  if (profile && appId && profile === appId) return { ok: false, reason: "app_id" };
-  if (!profile) {
-    const token = readInstagramUserId(input.tokenUserId);
-    if (token && appId && token === appId) return { ok: false, reason: "app_id" };
-    return { ok: false, reason: "missing" };
-  }
-  return { ok: true, userId: profile };
+  const blocked = new Set(input.appIds.map((id) => id.trim()).filter(Boolean));
+  const candidates = [input.profileUserId, input.profileAppScopedId ?? null].map((id) => readInstagramUserId(id));
+  const usable = candidates.find((id) => id && !blocked.has(id));
+  if (usable) return { ok: true, userId: usable };
+  const sawApp = [...candidates, readInstagramUserId(input.tokenUserId)].some((id) => id && blocked.has(id));
+  return { ok: false, reason: sawApp ? "app_id" : "missing" };
 }
 
-export function publicInstagramAccountId(storedId: string, appId: string): { externalAccountId: string; trusted: boolean } {
-  const id = storedId.trim();
-  if (!/^\d{1,32}$/.test(id) || (appId.trim() && id === appId.trim())) return { externalAccountId: "", trusted: false };
-  return { externalAccountId: id, trusted: true };
+export function usernameFromTokenPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  return instagramUsername((payload as { username?: unknown }).username);
+}
+
+/** A numeric id is not an Instagram account. A username and a non-app id are both required. */
+export function publicInstagramAccount(input: {
+  storedId: string;
+  username: string | null;
+  appIds: readonly string[];
+}): { externalAccountId: string; name?: string; trusted: boolean } {
+  const id = input.storedId.trim();
+  const blocked = new Set(input.appIds.map((item) => item.trim()).filter(Boolean));
+  const username = instagramUsername(input.username);
+  if (!/^\d{5,32}$/.test(id) || blocked.has(id) || !username) return { externalAccountId: "", trusted: false };
+  return { externalAccountId: id, name: username, trusted: true };
 }
 
 export function instagramAccountEligible(accountType: string | null): boolean {
