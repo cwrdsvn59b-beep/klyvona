@@ -18,6 +18,7 @@ export type ListedConnected = {
   externalAccountId: string;
   name?: string;
   trusted?: boolean;
+  status?: "connected" | "missing_username" | "unconfirmed" | "reconnect";
 };
 
 export const CONNECT_GATE_TEXT = "המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.";
@@ -93,14 +94,27 @@ export function accountsFromBody(body: Record<string, unknown>): ListedAccount[]
   });
 }
 
-export function instagramCardText(item: { name?: string; externalAccountId: string; trusted?: boolean }): {
+export function instagramCardText(item: {
+  name?: string;
+  externalAccountId: string;
+  trusted?: boolean;
+  status?: string;
+}): {
   title: string;
   detail: string;
+  tone: "ok" | "warn" | "danger";
+  label: string;
 } {
-  if (item.trusted !== true || !item.name || !item.externalAccountId) {
-    return { title: "Instagram", detail: "המזהה שנשמר אינו חשבון Instagram. חברו את החשבון מחדש." };
+  if (item.status === "reconnect") {
+    return { title: "Instagram", detail: item.externalAccountId, tone: "danger", label: "נדרשת הרשאה מחדש" };
   }
-  return { title: item.name, detail: `@${item.name}` };
+  if (item.status === "unconfirmed" || (!item.status && !item.externalAccountId)) {
+    return { title: "Instagram", detail: "הזהות לא אומתה. החשבון לא נותק.", tone: "warn", label: "הזהות לא אומתה" };
+  }
+  if (item.status === "missing_username" || !item.name) {
+    return { title: "Instagram", detail: item.externalAccountId, tone: "ok", label: "מחובר" };
+  }
+  return { title: item.name, detail: `@${item.name}`, tone: "ok", label: "מחובר" };
 }
 
 export function connectedFromBody(body: Record<string, unknown>): ListedConnected[] {
@@ -112,6 +126,9 @@ export function connectedFromBody(body: Record<string, unknown>): ListedConnecte
     const account: ListedConnected = { platform: row.platform, externalAccountId: row.externalAccountId };
     if (typeof row.name === "string" && row.name.trim()) account.name = row.name.trim();
     if (typeof row.trusted === "boolean") account.trusted = row.trusted;
+    if (row.status === "connected" || row.status === "missing_username" || row.status === "unconfirmed" || row.status === "reconnect") {
+      account.status = row.status;
+    }
     return [account];
   });
 }

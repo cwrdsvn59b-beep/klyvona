@@ -201,7 +201,7 @@ describe("instagram identity against a test database", () => {
     }
   });
 
-  it("accepts a profile that only has id and rejects both app ids", async () => {
+  it("does not store an app-scoped id as the publishing id and rejects app ids", async () => {
     const restoreEnv = useTestEnv();
     const { db, sql } = await createDatabase();
     const restoreFetch = mockInstagram({ id: PROFESSIONAL_ID, username: "klyvona_business", account_type: "BUSINESS" });
@@ -215,9 +215,9 @@ describe("instagram identity against a test database", () => {
         undefined,
         sql,
       );
-      assert.equal(accepted.headers.get("location"), "http://127.0.0.1:8080/connect?ready=1");
+      assert.equal(accepted.headers.get("location"), "http://127.0.0.1:8080/connect?error=exchange");
       const rows = await sql<{ external_account_id: string }>`select external_account_id from oauth_pending_accounts`;
-      assert.equal(rows[0]?.external_account_id, PROFESSIONAL_ID);
+      assert.equal(rows.length, 0);
     } finally {
       restoreFetch();
     }
@@ -267,11 +267,34 @@ describe("instagram identity against a test database", () => {
         }),
         sql,
       );
-      const body = await listed.json() as { connected: Array<{ name?: string; trusted: boolean; externalAccountId: string }> };
+      const body = await listed.json() as { connected: Array<{ name?: string; trusted: boolean; externalAccountId: string; status?: string }> };
+      assert.equal(body.connected[0]?.status, "missing_username");
       assert.equal(body.connected[0]?.trusted, false);
       assert.equal(body.connected[0]?.name, undefined);
-      assert.equal(body.connected[0]?.externalAccountId, "");
+      assert.equal(body.connected[0]?.externalAccountId, PROFESSIONAL_ID);
       assert.equal(JSON.stringify(body).includes("stored-token"), false);
+      const before = await sql<{ token_ciphertext: string | null }>`select token_ciphertext from social_accounts`;
+      const { previewInstagramIdentity } = await import("./instagram.server.ts");
+      const preview = await previewInstagramIdentity({ tokenCiphertext: sealed, storedId: PROFESSIONAL_ID }, {
+        async exchangeCode() {
+          throw new Error("unused");
+        },
+        async exchangeLongLived() {
+          throw new Error("unused");
+        },
+        async refresh() {
+          throw new Error("unused");
+        },
+        async profile() {
+          return { username: "klyvona_business", accountType: "BUSINESS", userId: PROFESSIONAL_ID, appScopedId: META_APP_ID };
+        },
+      });
+      assert.equal(preview.persist, false);
+      assert.equal(preview.status, "connected");
+      assert.equal(preview.publishUserId, PROFESSIONAL_ID);
+      assert.equal(JSON.stringify(preview).includes("stored-token"), false);
+      const after = await sql<{ token_ciphertext: string | null }>`select token_ciphertext from social_accounts`;
+      assert.equal(after[0]?.token_ciphertext, before[0]?.token_ciphertext);
     } finally {
       restoreEnv();
       await db.close();

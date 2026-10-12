@@ -15,7 +15,7 @@ import {
   selectionAllowed,
   sha256Hex,
   visiblePendingAccounts,
-  publicInstagramAccount,
+  classifyInstagramConnection,
   usernameFromTokenPayload,
 } from "@/lib/oauth/meta-guards";
 
@@ -362,16 +362,19 @@ export async function listPendingAccounts(request: Request, sql?: Sql): Promise<
   const connected = [];
   for (const row of saved) {
     let username: string | null = null;
+    let tokenReadable = false;
     if (row.token_ciphertext) {
       try {
         username = usernameFromTokenPayload(JSON.parse(await openSecret(row.token_ciphertext)));
+        tokenReadable = true;
       } catch {
         username = null;
       }
     }
-    const shown = publicInstagramAccount({
+    const shown = classifyInstagramConnection({
       storedId: row.external_account_id,
       username,
+      tokenReadable,
       appIds: configuredAppIds(),
     });
     connected.push({
@@ -379,6 +382,7 @@ export async function listPendingAccounts(request: Request, sql?: Sql): Promise<
       externalAccountId: shown.externalAccountId,
       name: shown.name,
       trusted: shown.trusted,
+      status: shown.status,
     });
   }
   return noStore({

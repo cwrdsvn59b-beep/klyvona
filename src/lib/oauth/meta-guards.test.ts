@@ -14,9 +14,10 @@ import {
   instagramConfigProblem,
   instagramConnectReturn,
   metaConfigProblem,
+  assessInstagramLookup,
+  classifyInstagramConnection,
   configuredAppIds,
   preserveInstagramIds,
-  publicInstagramAccount,
   readInstagramProfile,
   readInstagramShortToken,
   readInstagramUserId,
@@ -226,7 +227,7 @@ describe("instagram login", () => {
       profileAppScopedId: professional,
       appIds: [appId, metaAppId],
     });
-    assert.deepEqual(onlyScoped, { ok: true, userId: professional });
+    assert.deepEqual(onlyScoped, { ok: false, reason: "not_publishable" });
     assert.deepEqual(
       resolveInstagramAccount({ tokenUserId: appId, profileUserId: appId, profileAppScopedId: metaAppId, appIds: [appId, metaAppId] }),
       { ok: false, reason: "app_id" },
@@ -236,26 +237,29 @@ describe("instagram login", () => {
       reason: "app_id",
     });
     assert.equal(readInstagramProfile({ id: metaAppId, user_id: professional, username: "klyvona_business", account_type: "BUSINESS" }).userId, professional);
-    assert.deepEqual(publicInstagramAccount({ storedId: appId, username: "klyvona_business", appIds: [appId, metaAppId] }), {
-      externalAccountId: "",
-      trusted: false,
+    assert.equal(classifyInstagramConnection({ storedId: appId, username: "klyvona_business", tokenReadable: true, appIds: [appId, metaAppId] }).status, "unconfirmed");
+    assert.equal(classifyInstagramConnection({ storedId: metaAppId, username: "klyvona_business", tokenReadable: true, appIds: [appId, metaAppId] }).status, "unconfirmed");
+    assert.equal(classifyInstagramConnection({ storedId: professional, username: null, tokenReadable: true, appIds: [appId] }).status, "missing_username");
+    assert.equal(classifyInstagramConnection({ storedId: professional, username: null, tokenReadable: false, appIds: [appId] }).status, "reconnect");
+    const ready = classifyInstagramConnection({ storedId: professional, username: "klyvona_business", tokenReadable: true, appIds: [appId, metaAppId] });
+    assert.equal(ready.status, "connected");
+    assert.equal(ready.externalAccountId, professional);
+    const lookedUp = assessInstagramLookup({
+      storedId: appId,
+      tokenReadable: true,
+      lookup: "ok",
+      profile: { userId: professional, appScopedId: metaAppId, username: "klyvona_business" },
+      appIds: [appId, metaAppId],
     });
-    assert.deepEqual(publicInstagramAccount({ storedId: metaAppId, username: "klyvona_business", appIds: [appId, metaAppId] }), {
-      externalAccountId: "",
-      trusted: false,
-    });
-    assert.deepEqual(publicInstagramAccount({ storedId: professional, username: null, appIds: [appId] }), {
-      externalAccountId: "",
-      trusted: false,
-    });
-    assert.deepEqual(publicInstagramAccount({ storedId: professional, username: "klyvona_business", appIds: [appId, metaAppId] }), {
-      externalAccountId: professional,
-      name: "klyvona_business",
-      trusted: true,
-    });
+    assert.equal(lookedUp.persist, false);
+    assert.equal(lookedUp.publishUserId, professional);
+    assert.equal(lookedUp.status, "connected");
+    assert.equal(assessInstagramLookup({ storedId: professional, tokenReadable: true, lookup: "failed", profile: null, appIds: [appId] }).status, "missing_username");
     assert.equal(configuredAppIds({ INSTAGRAM_APP_ID: appId, META_APP_ID: metaAppId } as NodeJS.ProcessEnv).includes(metaAppId), true);
-    assert.equal(instagramCardText({ externalAccountId: professional, trusted: false }).detail.includes(appId), false);
-    assert.equal(instagramCardText({ externalAccountId: professional, name: "klyvona_business", trusted: true }).detail, "@klyvona_business");
+    assert.equal(instagramCardText({ externalAccountId: professional, status: "missing_username" }).label, "מחובר");
+    assert.equal(instagramCardText({ externalAccountId: "", status: "unconfirmed" }).label, "הזהות לא אומתה");
+    assert.equal(instagramCardText({ externalAccountId: professional, status: "reconnect" }).label, "נדרשת הרשאה מחדש");
+    assert.equal(instagramCardText({ externalAccountId: professional, name: "klyvona_business", status: "connected" }).detail, "@klyvona_business");
   });
 });
 

@@ -207,8 +207,8 @@ function ConnectPage() {
             return (
               <article key={`${item.platform}:${item.externalAccountId || card.detail}`} className="rounded-2xl bg-surface p-4 shadow-card">
                 <p className="font-semibold">{card.title}</p>
-                <p className={item.trusted === false ? "text-sm text-danger" : "text-sm text-ok"}>
-                  {item.trusted === false ? "נדרש חיבור מחדש" : "מחובר"}
+                <p className={card.tone === "ok" ? "text-sm text-ok" : card.tone === "warn" ? "text-sm text-muted" : "text-sm text-danger"}>
+                  {card.label}
                 </p>
                 <p className="mt-1 break-all text-sm text-muted" dir="ltr">
                   {card.detail}

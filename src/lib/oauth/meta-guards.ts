@@ -190,40 +190,79 @@ export function readInstagramProfile(payload: unknown): {
 }
 
 /**
- * /me user_id is the professional account id. /me id is the app-scoped id and
- * is used only when user_id is absent. Either may be skipped when it equals a
- * configured app id. The token-exchange id is never stored by itself.
+ * Publishing uses /me user_id, the professional Instagram account id.
+ * /me id is only the app-scoped id and is not a publish target.
+ * Neither value is accepted when it equals a configured app id.
  */
 export function resolveInstagramAccount(input: {
   tokenUserId: string | null;
   profileUserId: string | null;
   profileAppScopedId?: string | null;
   appIds: readonly string[];
-}): { ok: true; userId: string } | { ok: false; reason: "app_id" | "missing" } {
+}): { ok: true; userId: string } | { ok: false; reason: "app_id" | "missing" | "not_publishable" } {
   const blocked = new Set(input.appIds.map((id) => id.trim()).filter(Boolean));
-  const candidates = [input.profileUserId, input.profileAppScopedId ?? null].map((id) => readInstagramUserId(id));
-  const usable = candidates.find((id) => id && !blocked.has(id));
-  if (usable) return { ok: true, userId: usable };
-  const sawApp = [...candidates, readInstagramUserId(input.tokenUserId)].some((id) => id && blocked.has(id));
-  return { ok: false, reason: sawApp ? "app_id" : "missing" };
+  const professional = readInstagramUserId(input.profileUserId);
+  const scoped = readInstagramUserId(input.profileAppScopedId ?? null);
+  if (professional && !blocked.has(professional)) return { ok: true, userId: professional };
+  if (professional && blocked.has(professional)) return { ok: false, reason: "app_id" };
+  if (scoped && blocked.has(scoped)) return { ok: false, reason: "app_id" };
+  if (scoped) return { ok: false, reason: "not_publishable" };
+  const token = readInstagramUserId(input.tokenUserId);
+  if (token && blocked.has(token)) return { ok: false, reason: "app_id" };
+  return { ok: false, reason: "missing" };
 }
+
+export type InstagramConnectionStatus = "connected" | "missing_username" | "unconfirmed" | "reconnect";
 
 export function usernameFromTokenPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   return instagramUsername((payload as { username?: unknown }).username);
 }
 
-/** A numeric id is not an Instagram account. A username and a non-app id are both required. */
-export function publicInstagramAccount(input: {
+/** Missing username does not invalidate a readable token or a non-app account id. */
+export function classifyInstagramConnection(input: {
   storedId: string;
   username: string | null;
+  tokenReadable: boolean;
   appIds: readonly string[];
-}): { externalAccountId: string; name?: string; trusted: boolean } {
+}): { status: InstagramConnectionStatus; externalAccountId: string; name?: string; trusted: boolean } {
   const id = input.storedId.trim();
   const blocked = new Set(input.appIds.map((item) => item.trim()).filter(Boolean));
   const username = instagramUsername(input.username);
-  if (!/^\d{5,32}$/.test(id) || blocked.has(id) || !username) return { externalAccountId: "", trusted: false };
-  return { externalAccountId: id, name: username, trusted: true };
+  const publishable = /^\d{5,32}$/.test(id) && !blocked.has(id);
+  if (!input.tokenReadable) return { status: "reconnect", externalAccountId: publishable ? id : "", trusted: false };
+  if (!publishable) return { status: "unconfirmed", externalAccountId: "", trusted: false };
+  if (!username) return { status: "missing_username", externalAccountId: id, trusted: false };
+  return { status: "connected", externalAccountId: id, name: username, trusted: true };
+}
+
+/** Interprets a /me lookup. Never instructs the caller to write the database. */
+export function assessInstagramLookup(input: {
+  storedId: string;
+  tokenReadable: boolean;
+  lookup: "skipped" | "ok" | "failed";
+  profile: { userId: string | null; appScopedId: string | null; username: string } | null;
+  appIds: readonly string[];
+}): { status: InstagramConnectionStatus; publishUserId: string | null; username: string | null; persist: false } {
+  if (!input.tokenReadable) return { status: "reconnect", publishUserId: null, username: null, persist: false };
+  if (input.lookup !== "ok" || !input.profile) {
+    const local = classifyInstagramConnection({
+      storedId: input.storedId,
+      username: null,
+      tokenReadable: true,
+      appIds: input.appIds,
+    });
+    return { status: local.status, publishUserId: local.externalAccountId || null, username: null, persist: false };
+  }
+  const resolved = resolveInstagramAccount({
+    tokenUserId: null,
+    profileUserId: input.profile.userId,
+    profileAppScopedId: input.profile.appScopedId,
+    appIds: input.appIds,
+  });
+  const username = instagramUsername(input.profile.username);
+  if (!resolved.ok) return { status: "unconfirmed", publishUserId: null, username, persist: false };
+  return { status: username ? "connected" : "missing_username", publishUserId: resolved.userId, username, persist: false };
 }
 
 export function instagramAccountEligible(accountType: string | null): boolean {

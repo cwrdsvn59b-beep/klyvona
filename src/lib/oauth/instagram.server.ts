@@ -6,6 +6,7 @@ import {
   INSTAGRAM_GRAPH_URL,
   INSTAGRAM_TOKEN_URL,
   OAUTH_STATE_TTL_MS,
+  assessInstagramLookup,
   configuredAppIds,
   evaluateOAuthState,
   instagramAccountEligible,
@@ -321,6 +322,31 @@ export async function finishInstagramOAuth(
     return back("exchange");
   }
   return Response.redirect(new URL("/connect?ready=1", url.origin), 303);
+}
+
+/** Reads /me with the stored token and returns a verdict. Does not write the database or return the token. */
+export async function previewInstagramIdentity(
+  input: { tokenCiphertext: string | null; storedId: string },
+  graph: InstagramGraph,
+): Promise<{ status: "connected" | "missing_username" | "unconfirmed" | "reconnect"; publishUserId: string | null; username: string | null; persist: false }> {
+  const appIds = configuredAppIds();
+  if (!input.tokenCiphertext) {
+    return assessInstagramLookup({ storedId: input.storedId, tokenReadable: false, lookup: "skipped", profile: null, appIds });
+  }
+  let token = "";
+  try {
+    const saved = JSON.parse(await openSecret(input.tokenCiphertext)) as { userToken?: unknown };
+    token = typeof saved.userToken === "string" ? saved.userToken : "";
+  } catch {
+    return assessInstagramLookup({ storedId: input.storedId, tokenReadable: false, lookup: "skipped", profile: null, appIds });
+  }
+  if (!token) return assessInstagramLookup({ storedId: input.storedId, tokenReadable: false, lookup: "skipped", profile: null, appIds });
+  try {
+    const profile = await graph.profile(token);
+    return assessInstagramLookup({ storedId: input.storedId, tokenReadable: true, lookup: "ok", profile, appIds });
+  } catch {
+    return assessInstagramLookup({ storedId: input.storedId, tokenReadable: true, lookup: "failed", profile: null, appIds });
+  }
 }
 
 export async function renewInstagram(request: Request, graph: InstagramGraph = liveInstagramGraph): Promise<Response> {
