@@ -1,33 +1,12 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { isolatedServerEnv } from "./browser-env.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 const port = 8099;
 const origin = `http://127.0.0.1:${port}`;
-function isolatedEnv(extra = {}) {
-  const env = { ...process.env, ...extra };
-  for (const key of Object.keys(env)) {
-    if (
-      key === "DATABASE_URL" ||
-      key.startsWith("NEON") ||
-      key.startsWith("META_") ||
-      key.startsWith("INSTAGRAM_") ||
-      key.startsWith("TIKTOK_") ||
-      key.startsWith("BETTER_AUTH") ||
-      key.startsWith("GROK_AUTH") ||
-      key.startsWith("KLYVONA_") ||
-      key === "TOKEN_ENCRYPTION_KEY" ||
-      key.includes("SECRET") ||
-      key.includes("TOKEN")
-    ) {
-      delete env[key];
-    }
-  }
-  return env;
-}
-
-const serverEnv = isolatedEnv();
+const serverEnv = isolatedServerEnv(process.env, {});
 if (serverEnv.DATABASE_URL?.trim()) throw new Error("test server still has DATABASE_URL");
 console.log("testDatabaseIsolated=yes");
 const server = spawn(
@@ -63,7 +42,7 @@ try {
   const test = spawn(
     "node",
     ["--experimental-strip-types", "--test", "--test-timeout", "120000", "src/lib/oauth/connect-browser.test.ts"],
-    { cwd: root, stdio: "inherit", env: isolatedEnv({ CONNECT_TEST_ORIGIN: origin }) },
+    { cwd: root, stdio: "inherit", env: isolatedServerEnv(process.env, { CONNECT_TEST_ORIGIN: origin }) },
   );
   const code = await new Promise((resolve) => test.on("exit", resolve));
   stop();

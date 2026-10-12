@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { instagramRenewWrite } from "@/lib/oauth/instagram-renew";
 import { getSql } from "@/lib/db";
 import { openSecret, sealSecret } from "@/lib/crypto/tokens.server";
 import {
@@ -320,11 +321,16 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
     const saved = JSON.parse(await openSecret(sealed)) as { v?: number; userToken?: string; igUserId?: string };
     if (saved.v !== 2 || !saved.userToken || !saved.igUserId) return noStore({ error: "reconnect_required" }, 409);
     const renewed = await graph.refresh(saved.userToken);
-    const packed = await sealSecret(JSON.stringify({ v: 2, userToken: renewed.accessToken, igUserId: saved.igUserId }));
-    const expiresAt = renewed.expiresIn ? new Date(Date.now() + renewed.expiresIn * 1000).toISOString() : null;
+    const record = instagramRenewWrite({
+      accessToken: renewed.accessToken,
+      igUserId: saved.igUserId,
+      expiresIn: renewed.expiresIn,
+      now: Date.now(),
+    });
+    const packed = await sealSecret(JSON.stringify(record.tokenPayload));
     await sql`
       update social_accounts
-      set status = 'connected', token_ciphertext = ${packed}, token_expires_at = ${expiresAt}, last_error = null
+      set status = 'connected', token_ciphertext = ${packed}, token_expires_at = ${record.expiresAt}, last_error = null
       where client_id = ${parsed.client.id} and platform = ${"instagram"}
     `;
     return noStore({ ok: true });

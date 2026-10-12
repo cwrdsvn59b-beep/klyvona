@@ -209,7 +209,7 @@ function ConnectPage() {
             </article>
           ))}
           <div className="mt-2 grid gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/meta/renew", "instagram")}>
+            <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/instagram/renew", "instagram")}>
               חידוש הרשאת Instagram
             </Button>
             {confirmOff ? (

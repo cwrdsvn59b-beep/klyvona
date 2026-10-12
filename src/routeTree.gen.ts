@@ -18,6 +18,7 @@ import { Route as AdminClientsClientIdRouteImport } from './routes/admin/clients
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiOauthProviderCallbackRouteImport } from './routes/api/oauth/$provider/callback'
 import { Route as ApiOauthProviderStartRouteImport } from './routes/api/oauth/$provider/start'
+import { Route as ApiOauthInstagramRenewRouteImport } from './routes/api/oauth/instagram/renew'
 import { Route as ApiOauthMetaAccountsRouteImport } from './routes/api/oauth/meta/accounts'
 import { Route as ApiOauthMetaDisconnectRouteImport } from './routes/api/oauth/meta/disconnect'
 import { Route as ApiOauthMetaRenewRouteImport } from './routes/api/oauth/meta/renew'
@@ -69,6 +70,11 @@ const ApiOauthProviderStartRoute = ApiOauthProviderStartRouteImport.update({
   path: '/api/oauth/$provider/start',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiOauthInstagramRenewRoute = ApiOauthInstagramRenewRouteImport.update({
+  id: '/api/oauth/instagram/renew',
+  path: '/api/oauth/instagram/renew',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiOauthMetaAccountsRoute = ApiOauthMetaAccountsRouteImport.update({
   id: '/api/oauth/meta/accounts',
   path: '/api/oauth/meta/accounts',
@@ -100,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/instagram/renew': typeof ApiOauthInstagramRenewRoute
   '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
   '/api/oauth/meta/disconnect': typeof ApiOauthMetaDisconnectRoute
   '/api/oauth/meta/renew': typeof ApiOauthMetaRenewRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/instagram/renew': typeof ApiOauthInstagramRenewRoute
   '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
   '/api/oauth/meta/disconnect': typeof ApiOauthMetaDisconnectRoute
   '/api/oauth/meta/renew': typeof ApiOauthMetaRenewRoute
@@ -130,6 +138,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
+  '/api/oauth/instagram/renew': typeof ApiOauthInstagramRenewRoute
   '/api/oauth/meta/accounts': typeof ApiOauthMetaAccountsRoute
   '/api/oauth/meta/disconnect': typeof ApiOauthMetaDisconnectRoute
   '/api/oauth/meta/renew': typeof ApiOauthMetaRenewRoute
@@ -147,6 +156,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/instagram/renew'
     | '/api/oauth/meta/accounts'
     | '/api/oauth/meta/disconnect'
     | '/api/oauth/meta/renew'
@@ -161,6 +171,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/instagram/renew'
     | '/api/oauth/meta/accounts'
     | '/api/oauth/meta/disconnect'
     | '/api/oauth/meta/renew'
@@ -176,6 +187,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
+    | '/api/oauth/instagram/renew'
     | '/api/oauth/meta/accounts'
     | '/api/oauth/meta/disconnect'
     | '/api/oauth/meta/renew'
@@ -190,6 +202,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiOauthProviderCallbackRoute: typeof ApiOauthProviderCallbackRoute
   ApiOauthProviderStartRoute: typeof ApiOauthProviderStartRoute
+  ApiOauthInstagramRenewRoute: typeof ApiOauthInstagramRenewRoute
   ApiOauthMetaAccountsRoute: typeof ApiOauthMetaAccountsRoute
   ApiOauthMetaDisconnectRoute: typeof ApiOauthMetaDisconnectRoute
   ApiOauthMetaRenewRoute: typeof ApiOauthMetaRenewRoute
@@ -261,6 +274,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOauthProviderStartRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/oauth/instagram/renew': {
+      id: '/api/oauth/instagram/renew'
+      path: '/api/oauth/instagram/renew'
+      fullPath: '/api/oauth/instagram/renew'
+      preLoaderRoute: typeof ApiOauthInstagramRenewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/oauth/meta/accounts': {
       id: '/api/oauth/meta/accounts'
       path: '/api/oauth/meta/accounts'
@@ -314,6 +334,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiOauthProviderCallbackRoute: ApiOauthProviderCallbackRoute,
   ApiOauthProviderStartRoute: ApiOauthProviderStartRoute,
+  ApiOauthInstagramRenewRoute: ApiOauthInstagramRenewRoute,
   ApiOauthMetaAccountsRoute: ApiOauthMetaAccountsRoute,
   ApiOauthMetaDisconnectRoute: ApiOauthMetaDisconnectRoute,
   ApiOauthMetaRenewRoute: ApiOauthMetaRenewRoute,

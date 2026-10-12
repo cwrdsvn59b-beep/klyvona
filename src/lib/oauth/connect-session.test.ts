@@ -228,6 +228,7 @@ describe("route inventory", () => {
       "path: '/api/oauth/meta/accounts'",
       "path: '/api/oauth/meta/select'",
       "path: '/api/oauth/meta/renew'",
+      "path: '/api/oauth/instagram/renew'",
       "path: '/api/oauth/meta/disconnect'",
     ]) {
       assert.match(tree, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

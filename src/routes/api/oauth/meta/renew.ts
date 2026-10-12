@@ -1,17 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { renewInstagram } from "@/lib/oauth/instagram.server";
 import { renewMeta } from "@/lib/oauth/meta.server";
+import { renewTarget } from "@/lib/oauth/instagram-renew";
 
 async function renew(request: Request): Promise<Response> {
   const preview = request.clone();
-  let platform = "";
+  let platform: unknown = "";
   try {
     const body = (await preview.json()) as { platform?: unknown };
-    if (body.platform === "instagram") platform = "instagram";
+    platform = body.platform;
   } catch {
     platform = "";
   }
-  if (platform === "instagram") return renewInstagram(request);
+  if (renewTarget(platform) === "instagram") return renewInstagram(request);
   return renewMeta(request);
 }
 
