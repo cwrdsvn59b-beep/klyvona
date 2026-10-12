@@ -121,6 +121,13 @@ export async function readConnectBody(
 }
 
 export type ConnectAction = "start" | "accounts" | "select" | "renew" | "disconnect";
+export type ConnectNoticeTone = "error" | "ok" | "info";
+
+export function connectNoticeClass(tone: ConnectNoticeTone): string {
+  if (tone === "error") return "text-danger";
+  if (tone === "ok") return "text-ok";
+  return "text-muted";
+}
 
 function failedBody(body: Record<string, unknown>): boolean {
   return body.ok === false || (typeof body.error === "string" && body.error.length > 0);

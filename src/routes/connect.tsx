@@ -8,6 +8,7 @@ import {
   callConnect,
   canConnectInThisBrowser,
   CONNECT_GATE_TEXT,
+  connectNoticeClass,
   connectResultAccepted,
   connectedFromBody,
   instagramConnectLists,
@@ -32,19 +33,25 @@ const ERRORS: Record<string, string> = {
   expired: "תוקף בקשת החיבור פג. התחילו שוב.",
   used: "בקשת החיבור כבר נוצלה. התחילו שוב.",
   mismatch: "בקשת החיבור לא אומתה. התחילו שוב.",
-  exchange: "Meta לא השלימה את החיבור. לא נשמר אסימון.",
+  exchange: "Instagram לא השלימה את החיבור. לא נשמר אסימון.",
 };
+
+type Notice = { text: string; tone: "error" | "ok" | "info" };
 
 function ConnectPage() {
   const [receipt, setReceipt] = useState<ConnectReceipt | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [connected, setConnected] = useState<Connected[]>([]);
-  const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
   const pendingRef = useRef<ConnectPlatform | null>(null);
   const savingRef = useRef(false);
   const [pending, setPending] = useState<ConnectPlatform | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
+
+  function setMessage(text: string, tone: Notice["tone"] = "error") {
+    setNotice(text ? { text, tone } : null);
+  }
 
   useEffect(() => {
     const stored = readConnectReceipt(sessionStorage.getItem("klyvona-onboarding-receipt"));
@@ -52,13 +59,16 @@ function ConnectPage() {
     const code = new URLSearchParams(window.location.search).get("error");
     if (code) setMessage(ERRORS[code] ?? "החיבור לא הושלם.");
     if (new URLSearchParams(window.location.search).get("ready")) {
-      setMessage("בחרו רק חשבון Instagram שמופיע ברשימה.");
+      setMessage("בחרו רק חשבון Instagram שמופיע ברשימה.", "info");
     }
   }, []);
 
   useEffect(() => {
-    if (receipt?.connectSecret) void load();
-  }, [receipt?.reference]);
+    if (!receipt?.connectSecret) return;
+    void load();
+    // `load` reads the current receipt. Depending on the function would reload on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receipt]);
 
   async function post(path: string, extra: Record<string, string> = {}) {
     if (!receipt || !canConnectInThisBrowser(JSON.stringify(receipt))) return null;
@@ -128,9 +138,9 @@ function ConnectPage() {
         setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
         return;
       }
-      setMessage("החשבון נשמר. האסימון נשאר בשרת.");
+      setMessage("החשבון נשמר. האסימון נשאר בשרת.", "ok");
       const refreshed = await load(true);
-      if (!refreshed) setMessage("החשבון נשמר, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.");
+      if (!refreshed) setMessage("החשבון נשמר, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.", "info");
     } catch {
       setMessage("אין חיבור לשרת. נסו שוב.");
     } finally {
@@ -148,9 +158,9 @@ function ConnectPage() {
         setMessage("הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
         return;
       }
-      setMessage("הפעולה נשמרה.");
+      setMessage("הפעולה נשמרה.", "ok");
       const refreshed = await load(true);
-      if (!refreshed) setMessage("הפעולה נשמרה, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.");
+      if (!refreshed) setMessage("הפעולה נשמרה, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.", "info");
     } catch {
       setMessage("אין חיבור לשרת. נסו שוב.");
     } finally {
@@ -172,7 +182,11 @@ function ConnectPage() {
       <p className="mt-2 text-sm leading-relaxed text-muted">
         {receipt?.businessName ?? "הפנייה"} · לא מבקשים סיסמה. חשבון Instagram פרטי לא מופיע כזכאי לפרסום.
       </p>
-      {message ? <p className="mt-4 text-sm text-danger">{message}</p> : null}
+      {notice ? (
+        <p className={`mt-4 text-sm ${connectNoticeClass(notice.tone)}`} role={notice.tone === "error" ? "alert" : "status"}>
+          {notice.text}
+        </p>
+      ) : null}
       {!receipt?.connectSecret ? (
         <p className="mt-6 text-sm">{CONNECT_GATE_TEXT}</p>
       ) : (

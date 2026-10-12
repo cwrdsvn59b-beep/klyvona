@@ -412,7 +412,7 @@ function SocialStep({
                 </span>
                 <div className="min-w-0 flex-1">
                   <h2 className="font-semibold">{platform.label}</h2>
-                  <p className="text-sm text-muted">{platform.owner}</p>
+                  <p className="text-sm text-muted">חשבון מקצועי</p>
                 </div>
                 <StatusPill code="awaiting_setup" />
               </div>
@@ -429,7 +429,7 @@ function SocialStep({
           onChange={(event) => onChange("acknowledgedNoPassword", event.target.checked)}
         />
         <span className="text-sm leading-relaxed">
-          אני מבין שלא מזינים כאן סיסמה או מפתח API, ושהחיבור לרשתות עדיין לא פעיל.
+          אני מבין שלא מזינים כאן סיסמה או מפתח API, ושהחיבור ל-Instagram עדיין לא פעיל.
         </span>
       </label>
       {errors.acknowledgedNoPassword ? (

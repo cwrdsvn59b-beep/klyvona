@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { instagramRenewWrite, renewTarget } from "./instagram-renew.ts";
 import { connectResultAccepted, type ConnectCall } from "./connect-session.ts";
+import { openSecret, sealSecret } from "../crypto/tokens.server.ts";
 
 describe("instagram renew target", () => {
   it("never selects the Facebook or Meta renew handler", async () => {
@@ -16,6 +17,28 @@ describe("instagram renew target", () => {
     };
     assert.equal(await run("instagram"), "instagram");
     assert.equal(metaCalls, 0);
+  });
+
+  it("seals the refreshed token so the plaintext is not what gets stored", async () => {
+    const previous = process.env.TOKEN_ENCRYPTION_KEY;
+    process.env.TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
+    try {
+      const record = instagramRenewWrite({
+        accessToken: "plain-token-value",
+        igUserId: "1789",
+        expiresIn: 60,
+        now: 0,
+      });
+      const sealed = await sealSecret(JSON.stringify(record.tokenPayload));
+      assert.equal(sealed.includes("plain-token-value"), false);
+      const opened = JSON.parse(await openSecret(sealed)) as { v: number; userToken: string; igUserId: string };
+      assert.equal(opened.v, 2);
+      assert.equal(opened.userToken, "plain-token-value");
+      assert.equal(opened.igUserId, "1789");
+    } finally {
+      if (previous === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
+      else process.env.TOKEN_ENCRYPTION_KEY = previous;
+    }
   });
 
   it("stores the refreshed token and its expiry", () => {

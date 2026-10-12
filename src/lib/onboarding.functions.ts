@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { parseOnboarding, type OnboardingData } from "@/lib/onboarding-schema";
+import { CUSTOMER_CONNECT_PLATFORMS } from "@/lib/oauth/customer-flow";
 import { newConnectSecret } from "@/lib/oauth/meta.server";
 
 export type SubmitResult =
@@ -80,11 +81,8 @@ async function insertClient(data: OnboardingData, reference: string): Promise<In
     ),
     new_social as (
       insert into social_accounts (id, client_id, platform, status)
-      select v.id, c.id, v.platform, 'awaiting_setup'
+      select $16, c.id, $17, 'awaiting_setup'
       from new_client c
-      cross join (
-        values ($16::text, 'facebook'), ($17::text, 'instagram'), ($18::text, 'tiktok')
-      ) as v(id, platform)
       returning client_id
     ),
     new_events as (
@@ -93,10 +91,10 @@ async function insertClient(data: OnboardingData, reference: string): Promise<In
       from new_client c
       cross join (
         values
-          ($19::text, 'details', 'saved', 'פרטי העסק נשמרו'),
-          ($20::text, 'social', 'awaiting_setup', 'הלקוח אישר שלא מוסרים סיסמה. שלוש הרשתות ממתינות להגדרה'),
-          ($21::text, 'preferences', 'saved', 'העדפות התוכן והמסלול נשמרו'),
-          ($22::text, 'completed', 'completed', 'ההצטרפות הושלמה')
+          ($18::text, 'details', 'saved', 'פרטי העסק נשמרו'),
+          ($19::text, 'social', 'awaiting_setup', 'הלקוח אישר שלא מוסרים סיסמה. Instagram ממתין לחיבור'),
+          ($20::text, 'preferences', 'saved', 'העדפות התוכן והמסלול נשמרו'),
+          ($21::text, 'completed', 'completed', 'ההצטרפות הושלמה')
       ) as v(id, step, status, detail)
       returning client_id
     )
@@ -133,8 +131,7 @@ async function insertClient(data: OnboardingData, reference: string): Promise<In
       crypto.randomUUID(),
       data.planCode,
       crypto.randomUUID(),
-      crypto.randomUUID(),
-      crypto.randomUUID(),
+      CUSTOMER_CONNECT_PLATFORMS[0],
       crypto.randomUUID(),
       crypto.randomUUID(),
       crypto.randomUUID(),
@@ -197,7 +194,7 @@ export const submitOnboarding = createServerFn({ method: "POST" })
       reference,
       plan_code: inserted.plan_code,
       industry: parsed.data.industry,
-      platforms: ["facebook", "instagram", "tiktok"],
+      platforms: [...CUSTOMER_CONNECT_PLATFORMS],
       social_status: "awaiting_setup",
       onboarding_status: "completed",
       publishing_status: "waiting_connection",
