@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { getSql, type Sql } from "@/lib/db";
 import { openSecret, sealSecret } from "@/lib/crypto/tokens.server";
+import { emptyOAuthTraceGrant, recordOAuthTrace, traceFromStored, type OAuthTraceEntry } from "@/lib/oauth/oauth-trace";
 import {
   META_GRAPH_URL,
   META_TOKEN_URL,
@@ -402,7 +403,24 @@ export async function selectPendingAccount(request: Request, sql?: Sql): Promise
   if (instagramConfigProblem()) return disabled("instagram");
   const db = sql ?? (await getSql());
   const parsed = await readConnectBody(request, db);
-  if (!parsed?.pendingId) return noStore({ error: "unauthorized" }, 401);
+  const note = (result: "success" | "error", grant: Pick<OAuthTraceEntry, "grantStatus" | "grantSource" | "permissionsPresent">) => {
+    recordOAuthTrace({ operation: "authorization_confirmed", result, ...grant });
+    recordOAuthTrace({ operation: "payload_transferred", result, ...grant });
+  };
+  if (!parsed?.pendingId) {
+    note("error", emptyOAuthTraceGrant());
+    return noStore({ error: "unauthorized" }, 401);
+  }
+  let grant = emptyOAuthTraceGrant();
+  try {
+    const preview = await db<{ token_ciphertext: string | null }>`
+      select token_ciphertext from oauth_pending_accounts where id = ${parsed.pendingId} limit 1
+    `;
+    const sealed = preview[0]?.token_ciphertext;
+    if (sealed) grant = traceFromStored(JSON.parse(await openSecret(sealed)));
+  } catch {
+    grant = emptyOAuthTraceGrant();
+  }
   const applied = await db<{
     client_id: string | null;
     platform: string | null;
@@ -464,16 +482,21 @@ export async function selectPendingAccount(request: Request, sql?: Sql): Promise
   `;
   const row = applied[0];
   const updatedCount = Number(row?.updated_count ?? 0);
-  if (!row?.client_id) return noStore({ error: "missing" }, 404);
-  if (row.client_id !== parsed.client.id) return noStore({ error: "foreign" }, 403);
-  if (row.platform !== "instagram") return noStore({ error: "unsupported_platform" }, 403);
-  if (row.expired) return noStore({ error: "expired" }, 403);
-  if (row.eligible !== true) return noStore({ error: "ineligible" }, 403);
-  if (row.has_token !== true) return noStore({ error: "ineligible" }, 403);
+  const fail = (body: Record<string, unknown>, status: number) => {
+    note("error", grant);
+    return noStore(body, status);
+  };
+  if (!row?.client_id) return fail({ error: "missing" }, 404);
+  if (row.client_id !== parsed.client.id) return fail({ error: "foreign" }, 403);
+  if (row.platform !== "instagram") return fail({ error: "unsupported_platform" }, 403);
+  if (row.expired) return fail({ error: "expired" }, 403);
+  if (row.eligible !== true) return fail({ error: "ineligible" }, 403);
+  if (row.has_token !== true) return fail({ error: "ineligible" }, 403);
   if (updatedCount !== 1) {
     const mismatch = Boolean(row.previous_account_id) && row.previous_account_id !== row.pending_account_id;
-    return noStore({ error: mismatch ? "instagram_id_mismatch" : "missing_social_account" }, mismatch ? 409 : 409);
+    return fail({ error: mismatch ? "instagram_id_mismatch" : "missing_social_account" }, 409);
   }
+  note("success", grant);
   return noStore({
     ok: true,
     platform: "instagram",

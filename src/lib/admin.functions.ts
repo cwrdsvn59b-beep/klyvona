@@ -178,6 +178,15 @@ export const getAdminAccess = createServerFn({ method: "GET" })
     return resolveAdminAccess(context.userId);
   });
 
+export const getOAuthTrace = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { resolveAdminAccess } = await import("@/lib/admin-grant.server");
+    const { oauthTraceForAdmin } = await import("@/lib/oauth/oauth-trace");
+    const access = await resolveAdminAccess(context.userId);
+    return oauthTraceForAdmin(access);
+  });
+
 export const getDashboard = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator((input: unknown) => {

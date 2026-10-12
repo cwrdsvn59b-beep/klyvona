@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { Search } from "lucide-react";
-import { getDashboard, type DashboardData } from "@/lib/admin.functions";
+import { getDashboard, getOAuthTrace, type DashboardData } from "@/lib/admin.functions";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatWhen } from "@/lib/format";
 import { industryLabel, planLabel } from "@/lib/labels";
@@ -17,6 +17,7 @@ function AdminHome() {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [data, setData] = useState<DashboardData | null>(null);
+  const [trace, setTrace] = useState<Array<{ at: string; operation: string; result: string; grantStatus: string; grantSource: string; permissionsPresent: boolean }>>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -39,6 +40,21 @@ function AdminHome() {
       cancelled = true;
     };
   }, [user?.id, debounced]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    getOAuthTrace()
+      .then((rows) => {
+        if (!cancelled) setTrace(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setTrace([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   return (
     <div className="grid gap-6">
@@ -122,6 +138,26 @@ function AdminHome() {
           </section>
 
           <section>
+            <h2 className="text-lg font-semibold">אבחון חיבור Instagram</h2>
+            <p className="mt-1 text-sm leading-relaxed text-muted">
+              היומן נשמר רק בזיכרון התהליך, עד שעתיים או 40 אירועים, ונמחק בהפעלה מחדש. אין כאן אסימונים, מזהים או רשימת הרשאות.
+            </p>
+            {trace.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">עדיין אין אירועים בתהליך הזה.</p>
+            ) : (
+              <ul className="mt-3 grid gap-2">
+                {trace.map((entry, index) => (
+                  <li key={`${entry.at}-${entry.operation}-${index}`} className="rounded-2xl bg-surface px-4 py-3 text-sm shadow-card">
+                    <p dir="ltr" className="text-muted">{entry.at}</p>
+                    <p className="mt-1 font-medium">{traceOperationLabel(entry.operation)} · {entry.result === "success" ? "הצליח" : "נכשל"}</p>
+                    <p dir="ltr" className="mt-1 text-muted">{entry.grantStatus} · {entry.grantSource} · permissions {entry.permissionsPresent ? "yes" : "no"}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section>
             <label className="relative block">
               <Search className="pointer-events-none absolute end-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
               <input
@@ -173,6 +209,19 @@ function AdminHome() {
       ) : null}
     </div>
   );
+}
+
+function traceOperationLabel(operation: string): string {
+  const labels: Record<string, string> = {
+    instagram_callback: "סיום כניסת Instagram",
+    permissions_field: "שדה permissions בתשובת Meta",
+    pending_saved: "שמירה זמנית",
+    authorization_confirmed: "אישור עדכון ההרשאה",
+    payload_transferred: "העברה לחיבור השמור",
+    instagram_renew: "חידוש אסימון",
+    permissions_checked: "בדיקת הרשאות",
+  };
+  return labels[operation] ?? operation;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

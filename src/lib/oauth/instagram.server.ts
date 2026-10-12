@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { getSql, type Sql } from "@/lib/db";
+import { emptyOAuthTraceGrant, recordOAuthTrace, traceFromStored } from "@/lib/oauth/oauth-trace";
 import { instagramRenewWrite, instagramTokenPayload } from "@/lib/oauth/instagram-renew";
 import { openSecret, sealSecret } from "@/lib/crypto/tokens.server";
 import {
@@ -36,7 +37,7 @@ export type InstagramGraph = {
     redirectUri: string;
     appId: string;
     appSecret: string;
-  }): Promise<{ accessToken: string; userId: string; grant: { status: "permissions_confirmed" | "permissions_missing" | "permissions_unknown"; granted: string[] } }>;
+  }): Promise<{ accessToken: string; userId: string; grant: { status: "permissions_confirmed" | "permissions_missing" | "permissions_unknown"; granted: string[] }; permissionsPresent?: boolean }>;
   exchangeLongLived(input: {
     token: string;
     appSecret: string;
@@ -262,6 +263,7 @@ export async function finishInstagramOAuth(
   const url = new URL(request.url);
   const outcome = instagramCallbackOutcome(url.searchParams);
   if (outcome !== "ready") {
+    recordOAuthTrace({ operation: "instagram_callback", result: "error", ...emptyOAuthTraceGrant() });
     return Response.redirect(new URL(instagramConnectReturn(outcome), url.origin), 303);
   }
   if (instagramConfigProblem()) return disabled();
@@ -303,9 +305,11 @@ export async function finishInstagramOAuth(
   `;
   if (!consumed[0]) return back("used");
 
+  let observed: { present: boolean; status: "permissions_confirmed" | "permissions_missing" | "permissions_unknown" } | null = null;
   try {
     const { appId, appSecret } = appCredentials();
     const shortLived = await graph.exchangeCode({ code, redirectUri, appId, appSecret });
+    observed = { present: shortLived.permissionsPresent === true, status: shortLived.grant.status };
     const longLived = await graph.exchangeLongLived({ token: shortLived.accessToken, appSecret });
     const profile = await graph.profile(longLived.accessToken);
     const identity = resolveInstagramAccount({
@@ -370,8 +374,27 @@ export async function finishInstagramOAuth(
         )
       `;
     }
+    if (!observed) throw new Error("instagram_token_missing");
+    const grant = {
+      grantStatus: observed.status,
+      grantSource: "oauth_exchange" as const,
+      permissionsPresent: observed.present,
+    };
+    recordOAuthTrace({ operation: "instagram_callback", result: "success", ...grant });
+    recordOAuthTrace({ operation: "permissions_field", result: "success", ...grant });
+    recordOAuthTrace({ operation: "pending_saved", result: packed ? "success" : "error", ...grant });
   } catch (error) {
     console.error("[instagram] callback failed", error instanceof Error ? error.message : "error");
+    recordOAuthTrace({ operation: "instagram_callback", result: "error", ...emptyOAuthTraceGrant() });
+    if (observed) {
+      recordOAuthTrace({
+        operation: "permissions_field",
+        result: "success",
+        grantStatus: observed.status,
+        grantSource: "oauth_exchange",
+        permissionsPresent: observed.present,
+      });
+    }
     return back("exchange");
   }
   return Response.redirect(new URL("/connect?ready=1", url.origin), 303);
@@ -451,7 +474,10 @@ export async function checkInstagramPublishPermission(
   if (instagramConfigProblem()) return disabled();
   const db = sql ?? (await getSql());
   const parsed = await readConnectBody(request, db);
-  if (!parsed) return noStore({ error: "unauthorized" }, 401);
+  if (!parsed) {
+    recordOAuthTrace({ operation: "permissions_checked", result: "error", ...emptyOAuthTraceGrant() });
+    return noStore({ error: "unauthorized" }, 401);
+  }
   const rows = await db<{ external_account_id: string | null; token_ciphertext: string | null; status: string }>`
     select external_account_id, token_ciphertext, status from social_accounts
     where client_id = ${parsed.client.id} and platform = ${"instagram"} limit 1
@@ -466,8 +492,15 @@ export async function checkInstagramPublishPermission(
     identity: ReturnType<typeof instagramVerifyVerdict>,
     permissions: { documented: false; reviewRequired?: boolean } | { documented: true; granted: string[]; reviewRequired?: boolean } | null,
     failure: "none" | "auth" | "temporary",
-  ) =>
-    noStore({
+  ) => {
+    recordOAuthTrace({
+      operation: "permissions_checked",
+      result: failure === "none" ? "success" : "error",
+      grantStatus: storedGrant.status,
+      grantSource: storedGrant.source,
+      permissionsPresent: storedGrant.granted.length > 0,
+    });
+    return noStore({
       identity: identity.check,
       identityConfirmed: identity.identityConfirmed,
       username: identity.username,
@@ -478,6 +511,7 @@ export async function checkInstagramPublishPermission(
       checkedAt,
       persist: false,
     });
+  };
 
   if (!before?.token_ciphertext) {
     const identity = instagramVerifyVerdict({ storedId, tokenReadable: false, failure: "none", profile: null, appIds });
@@ -522,12 +556,15 @@ export async function checkInstagramPublishPermission(
   return finish(identity, permissions, "none");
 }
 
-export async function renewInstagram(request: Request, graph: InstagramGraph = liveInstagramGraph): Promise<Response> {
+export async function renewInstagram(request: Request, graph: InstagramGraph = liveInstagramGraph, sql?: Sql): Promise<Response> {
   if (instagramConfigProblem()) return disabled();
-  const parsed = await readConnectBody(request);
-  if (!parsed || parsed.platform !== "instagram") return noStore({ error: "unauthorized" }, 401);
-  const sql = await getSql();
-  const rows = await sql<{ token_ciphertext: string | null }>`
+  const parsed = await readConnectBody(request, sql);
+  if (!parsed || parsed.platform !== "instagram") {
+    recordOAuthTrace({ operation: "instagram_renew", result: "error", ...emptyOAuthTraceGrant() });
+    return noStore({ error: "unauthorized" }, 401);
+  }
+  const db = sql ?? (await getSql());
+  const rows = await db<{ token_ciphertext: string | null }>`
     select token_ciphertext from social_accounts
     where client_id = ${parsed.client.id} and platform = ${"instagram"} limit 1
   `;
@@ -546,15 +583,18 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
       previous: saved,
     });
     const packed = await sealSecret(JSON.stringify(record.tokenPayload));
-    await sql`
+    await db`
       update social_accounts
       set status = 'connected', token_ciphertext = ${packed}, token_expires_at = ${record.expiresAt}, last_error = null
       where client_id = ${parsed.client.id} and platform = ${"instagram"}
     `;
+    const written = traceFromStored(record.tokenPayload);
+    recordOAuthTrace({ operation: "instagram_renew", result: "success", ...written, permissionsPresent: false });
     return noStore({ ok: true });
   } catch (error) {
     console.error("[instagram] renew failed", error instanceof Error ? error.message : "error");
-    await sql`
+    recordOAuthTrace({ operation: "instagram_renew", result: "error", ...emptyOAuthTraceGrant() });
+    await db`
       update social_accounts
       set status = 'expired', last_error = ${"ההרשאה פגה או בוטלה. יש לחבר מחדש."}
       where client_id = ${parsed.client.id} and platform = ${"instagram"}

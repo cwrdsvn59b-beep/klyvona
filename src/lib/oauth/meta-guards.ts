@@ -177,7 +177,7 @@ export function readStoredInstagramGrant(payload: unknown): {
   return { status: parsed.status, source, granted: parsed.granted };
 }
 
-export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string; grant: { status: InstagramGrantStatus; granted: string[] } } | null {
+export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string; grant: { status: InstagramGrantStatus; granted: string[] }; permissionsPresent: boolean } | null {
   if (!payload || typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
   const entry = Array.isArray(record.data) ? record.data[0] : record;
@@ -186,7 +186,12 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
   const accessToken = typeof row.access_token === "string" ? row.access_token : "";
   const userId = readInstagramUserId(row.user_id);
   if (!accessToken || !userId) return null;
-  return { accessToken, userId, grant: readInstagramGrant("permissions" in row ? row.permissions : undefined) };
+  return {
+    accessToken,
+    userId,
+    grant: readInstagramGrant("permissions" in row ? row.permissions : undefined),
+    permissionsPresent: "permissions" in row && row.permissions != null,
+  };
 }
 
 export function instagramUsername(value: unknown): string | null {
