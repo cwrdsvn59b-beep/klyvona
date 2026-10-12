@@ -214,18 +214,27 @@ const PERMISSION_TEXT: Record<string, { message: string; tone: ConnectNoticeTone
   temporary_error: { message: "שגיאה זמנית בבדיקה.", tone: "info" },
 };
 
+const GRANT_TEXT: Record<string, string> = {
+  permissions_confirmed: "בעת החיבור Meta דיווחה על הרשאת פרסום. זו אינה בדיקה מקוונת עדכנית.",
+  permissions_missing: "בעת החיבור תשובת Meta לא כללה הרשאת פרסום.",
+  permissions_unknown: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.",
+};
+
 export function instagramPermissionText(body: Record<string, unknown>): {
   message: string;
   identityLabel: string;
+  grantMessage: string;
   tone: ConnectNoticeTone;
 } {
-  if (body.identity === "reconnect") return { message: "נדרשת הרשאה מחדש.", identityLabel: "נדרשת הרשאה מחדש", tone: "error" };
+  const grantMessage = GRANT_TEXT[typeof body.grantAtConnection === "string" ? body.grantAtConnection : ""] ?? GRANT_TEXT.permissions_unknown;
+  const remembered = body.grantSource === "preserved_on_refresh" ? `${grantMessage} הנתון נשמר בחידוש האסימון ולא אושר מחדש מול Meta.` : grantMessage;
+  if (body.identity === "reconnect") return { message: "נדרשת הרשאה מחדש.", identityLabel: "נדרשת הרשאה מחדש", grantMessage: remembered, tone: "error" };
   if (body.identity === "identity_mismatch") {
-    return { message: "מזהה Instagram אינו תואם למזהה שנשמר.", identityLabel: "המזהה אינו תואם", tone: "error" };
+    return { message: "מזהה Instagram אינו תואם למזהה שנשמר.", identityLabel: "המזהה אינו תואם", grantMessage: remembered, tone: "error" };
   }
   const found = PERMISSION_TEXT[typeof body.permission === "string" ? body.permission : ""] ?? PERMISSION_TEXT.verification_unavailable;
   const identityLabel = body.identityConfirmed === true ? "החשבון אומת" : "החשבון לא אומת";
-  return { message: found.message, identityLabel, tone: found.tone };
+  return { message: found.message, identityLabel, grantMessage: remembered, tone: found.tone };
 }
 
 export async function callConnect(

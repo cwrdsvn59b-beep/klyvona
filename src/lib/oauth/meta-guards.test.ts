@@ -20,6 +20,8 @@ import {
   preserveInstagramIds,
   readInstagramProfile,
   readInstagramShortToken,
+  readInstagramGrant,
+  readStoredInstagramGrant,
   readInstagramUserId,
   resolveInstagramAccount,
   secretMatches,
@@ -198,9 +200,23 @@ describe("instagram login", () => {
   it("reads the short-lived token shape and rejects a personal account", () => {
     assert.deepEqual(
       readInstagramShortToken({ data: [{ access_token: "short", user_id: "1789", permissions: "instagram_business_basic" }] }),
-      { accessToken: "short", userId: "1789" },
+      { accessToken: "short", userId: "1789", grant: { status: "permissions_missing", granted: ["instagram_business_basic"] } },
     );
     assert.equal(readInstagramShortToken({ access_token: "short" }), null);
+    assert.deepEqual(
+      readInstagramGrant("instagram_business_basic,instagram_business_content_publish"),
+      { status: "permissions_confirmed", granted: ["instagram_business_basic", "instagram_business_content_publish"] },
+    );
+    assert.equal(readInstagramGrant("instagram_business_basic").status, "permissions_missing");
+    assert.equal(readInstagramGrant(undefined).status, "permissions_unknown");
+    assert.equal(readInstagramGrant(["instagram_business_content_publish"]).status, "permissions_unknown");
+    assert.equal(readInstagramGrant("not a scope").status, "permissions_unknown");
+    assert.equal(readInstagramShortToken({ access_token: "short", user_id: "1789" })?.grant.status, "permissions_unknown");
+    assert.deepEqual(readStoredInstagramGrant({ v: 2, userToken: "old-token", igUserId: "1789" }), {
+      status: "permissions_unknown",
+      source: "not_stored",
+      granted: [],
+    });
     assert.equal(instagramAccountEligible("BUSINESS"), true);
     assert.equal(instagramAccountEligible("MEDIA_CREATOR"), true);
     assert.equal(instagramAccountEligible("PERSONAL"), false);

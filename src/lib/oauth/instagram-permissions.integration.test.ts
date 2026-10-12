@@ -158,6 +158,8 @@ describe("instagram publish permission check", () => {
       const granted = ["instagram_business_basic", "instagram_business_content_publish"];
       const confirmed = await run(sql, business, { documented: true, granted });
       assert.equal(confirmed.body.permission, "permission_confirmed");
+      assert.equal(confirmed.body.grantAtConnection, "permissions_unknown");
+      assert.equal(confirmed.body.liveRecheck, "not_performed");
       assert.equal(confirmed.body.contentCreated, false);
       const created = await run(sql, creator, { documented: true, granted });
       assert.equal(created.body.permission, "permission_confirmed");
@@ -198,6 +200,57 @@ describe("instagram publish permission check", () => {
       const denied = await run(sql, business, { documented: true, granted: ["instagram_business_content_publish"] }, "KV-TEST", "wrong-secret");
       assert.equal(denied.status, 401);
       assert.equal(JSON.stringify(denied.body).includes("stored-token"), false);
+    } finally {
+      restore();
+      await db.close();
+    }
+  });
+
+  it("reports the grant saved at connection without calling it a live permission", async () => {
+    const restore = useTestEnv();
+    const { db, sql } = await createDatabase();
+    const { instagramPermissionText } = await import("./connect-session.ts");
+    try {
+      await seed(sql);
+      const replace = async (payload: Record<string, unknown>) => {
+        const ciphertext = await sealSecret(JSON.stringify(payload));
+        await sql`update social_accounts set token_ciphertext = ${ciphertext} where id = ${"social-1"}`;
+        return ciphertext;
+      };
+      const base = { v: 2, userToken: "stored-token", igUserId: PROFESSIONAL_ID, username: "klyvona_business" };
+      const before = await replace({
+        ...base,
+        grantStatus: "permissions_confirmed",
+        grantSource: "oauth_exchange",
+        grantedPermissions: ["instagram_business_basic", "instagram_business_content_publish"],
+      });
+      const confirmed = await run(sql, business, { documented: false });
+      assert.equal(confirmed.body.grantAtConnection, "permissions_confirmed");
+      assert.equal(confirmed.body.grantSource, "oauth_exchange");
+      assert.equal(confirmed.body.liveRecheck, "not_performed");
+      assert.equal(confirmed.body.permission, "verification_unavailable");
+      assert.equal(confirmed.body.identity, "identity_confirmed");
+      const confirmedText = instagramPermissionText(confirmed.body);
+      assert.match(confirmedText.grantMessage, /אינה בדיקה מקוונת/);
+      assert.equal(JSON.stringify(confirmed.body).includes("stored-token"), false);
+      assert.equal(JSON.stringify(confirmed.body).includes("instagram_business_content_publish"), false);
+      assert.equal((await sql<{ token_ciphertext: string }>`select token_ciphertext from social_accounts where id = ${"social-1"}`)[0]?.token_ciphertext, before);
+
+      await replace({ ...base, grantStatus: "permissions_missing", grantSource: "oauth_exchange", grantedPermissions: ["instagram_business_basic"] });
+      const missing = await run(sql, business, { documented: false });
+      assert.equal(missing.body.grantAtConnection, "permissions_missing");
+      assert.notEqual(missing.body.identity, "reconnect");
+
+      await replace(base);
+      const oldToken = await run(sql, business, { documented: false });
+      assert.equal(oldToken.body.grantAtConnection, "permissions_unknown");
+      assert.equal(oldToken.body.grantSource, "not_stored");
+      assert.equal(oldToken.body.identity, "identity_confirmed");
+
+      await replace({ ...base, grantStatus: "permissions_confirmed", grantedPermissions: ["not a scope"] });
+      const broken = await run(sql, business, { documented: false });
+      assert.equal(broken.body.grantAtConnection, "permissions_unknown");
+      assert.notEqual(broken.body.identity, "reconnect");
     } finally {
       restore();
       await db.close();

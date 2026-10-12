@@ -21,6 +21,7 @@ import {
   preserveInstagramIds,
   readInstagramProfile,
   readInstagramShortToken,
+  readStoredInstagramGrant,
   resolveInstagramAccount,
   secretMatches,
   sha256Hex,
@@ -35,7 +36,7 @@ export type InstagramGraph = {
     redirectUri: string;
     appId: string;
     appSecret: string;
-  }): Promise<{ accessToken: string; userId: string }>;
+  }): Promise<{ accessToken: string; userId: string; grant: { status: "permissions_confirmed" | "permissions_missing" | "permissions_unknown"; granted: string[] } }>;
   exchangeLongLived(input: {
     token: string;
     appSecret: string;
@@ -317,7 +318,12 @@ export async function finishInstagramOAuth(
     const username = instagramUsername(profile.username);
     const eligible = instagramAccountEligible(profile.accountType);
     const packed = eligible
-      ? await sealSecret(JSON.stringify(instagramTokenPayload({ accessToken: longLived.accessToken, igUserId: identity.userId, username })))
+      ? await sealSecret(JSON.stringify(instagramTokenPayload({
+          accessToken: longLived.accessToken,
+          igUserId: identity.userId,
+          username,
+          grant: { status: shortLived.grant.status, granted: shortLived.grant.granted, source: "oauth_exchange" },
+        })))
       : null;
     const expiresAt = longLived.expiresIn ? new Date(Date.now() + longLived.expiresIn * 1000).toISOString() : null;
     const pendingUntil = new Date(Date.now() + PENDING_TTL_MS).toISOString();
@@ -454,6 +460,8 @@ export async function checkInstagramPublishPermission(
   const storedId = before?.external_account_id ?? "";
   const appIds = configuredAppIds();
   const checkedAt = new Date().toISOString();
+  const emptyGrant: ReturnType<typeof readStoredInstagramGrant> = { status: "permissions_unknown", source: "not_stored", granted: [] };
+  let storedGrant = emptyGrant;
   const finish = (
     identity: ReturnType<typeof instagramVerifyVerdict>,
     permissions: { documented: false; reviewRequired?: boolean } | { documented: true; granted: string[]; reviewRequired?: boolean } | null,
@@ -464,6 +472,9 @@ export async function checkInstagramPublishPermission(
       identityConfirmed: identity.identityConfirmed,
       username: identity.username,
       ...instagramPermissionVerdict({ identityConfirmed: identity.identityConfirmed, failure, permissions }),
+      grantAtConnection: storedGrant.status,
+      grantSource: storedGrant.source,
+      liveRecheck: "not_performed",
       checkedAt,
       persist: false,
     });
@@ -475,6 +486,7 @@ export async function checkInstagramPublishPermission(
   let token = "";
   try {
     const saved = JSON.parse(await openSecret(before.token_ciphertext)) as { userToken?: unknown };
+    storedGrant = readStoredInstagramGrant(saved);
     token = typeof saved.userToken === "string" ? saved.userToken : "";
   } catch {
     token = "";
@@ -531,6 +543,7 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
       expiresIn: renewed.expiresIn,
       now: Date.now(),
       username: saved.username,
+      previous: saved,
     });
     const packed = await sealSecret(JSON.stringify(record.tokenPayload));
     await sql`

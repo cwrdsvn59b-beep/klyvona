@@ -1,8 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { instagramRenewWrite, renewTarget } from "./instagram-renew.ts";
-import { connectResultAccepted, type ConnectCall } from "./connect-session.ts";
+import { instagramRenewWrite, instagramTokenPayload, renewTarget } from "./instagram-renew.ts";
+import { connectResultAccepted, instagramPermissionText, type ConnectCall } from "./connect-session.ts";
 import { openSecret, sealSecret } from "../crypto/tokens.server.ts";
 
 describe("instagram renew target", () => {
@@ -41,12 +41,51 @@ describe("instagram renew target", () => {
     }
   });
 
-  it("stores the refreshed token and its expiry", () => {
+  it("stores the refreshed token and its expiry", async () => {
     const now = Date.parse("2026-10-12T00:00:00.000Z");
     const saved = instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: 3600, now });
     assert.deepEqual(saved.tokenPayload, { v: 2, userToken: "refreshed-token", igUserId: "1789" });
     assert.equal(saved.expiresAt, "2026-10-12T01:00:00.000Z");
     assert.equal(instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: null, now }).expiresAt, null);
+    const previous = {
+      v: 2,
+      userToken: "old-token",
+      igUserId: "1789",
+      grantStatus: "permissions_confirmed",
+      grantSource: "oauth_exchange",
+      grantedPermissions: ["instagram_business_basic", "instagram_business_content_publish"],
+    };
+    const carried = instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: 60, now, previous });
+    assert.equal(carried.tokenPayload.grantStatus, "permissions_confirmed");
+    assert.equal(carried.tokenPayload.grantSource, "preserved_on_refresh");
+    assert.deepEqual(carried.tokenPayload.grantedPermissions, previous.grantedPermissions);
+    const untouched = instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: 60, now, previous: { v: 2, userToken: "old-token", igUserId: "1789" } });
+    assert.equal(untouched.tokenPayload.grantStatus, undefined);
+    const key = process.env.TOKEN_ENCRYPTION_KEY;
+    process.env.TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
+    try {
+      const sealedGrant = instagramTokenPayload({
+        accessToken: "plain-token-value",
+        igUserId: "1789",
+        grant: { status: "permissions_confirmed", granted: ["instagram_business_basic", "instagram_business_content_publish"], source: "oauth_exchange" },
+      });
+      const sealed = await sealSecret(JSON.stringify(sealedGrant));
+      assert.equal(sealed.includes("plain-token-value"), false);
+      assert.equal(sealed.includes("instagram_business_content_publish"), false);
+    } finally {
+      if (key === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
+      else process.env.TOKEN_ENCRYPTION_KEY = key;
+    }
+    const text = instagramPermissionText({
+      identity: "identity_confirmed",
+      identityConfirmed: true,
+      permission: "verification_unavailable",
+      grantAtConnection: "permissions_confirmed",
+      grantSource: "oauth_exchange",
+      liveRecheck: "not_performed",
+    });
+    assert.match(text.grantMessage, /אינה בדיקה מקוונת/);
+    assert.equal(text.message.includes("אושרה"), false);
   });
 
   it("rejects renew errors without treating them as success", () => {

@@ -52,7 +52,7 @@ function ConnectPage() {
   const [pending, setPending] = useState<ConnectPlatform | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
   const [permissionBusy, setPermissionBusy] = useState(false);
-  const [permissionView, setPermissionView] = useState<{ message: string; identityLabel: string; tone: "error" | "ok" | "info"; checkedAt: string } | null>(null);
+  const [permissionView, setPermissionView] = useState<{ message: string; identityLabel: string; grantMessage: string; tone: "error" | "ok" | "info"; checkedAt: string } | null>(null);
 
   function setMessage(text: string, tone: Notice["tone"] = "error") {
     setNotice(text ? { text, tone } : null);
@@ -159,13 +159,14 @@ function ConnectPage() {
     try {
       const result = await post("/api/oauth/instagram/permissions");
       if (!result || result.networkError) {
-        setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", tone: "info", checkedAt: new Date().toISOString() });
+        setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", grantMessage: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.", tone: "info", checkedAt: new Date().toISOString() });
         return;
       }
       if (!connectResultAccepted(result, "permissions")) {
         setPermissionView({
           message: result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לאמת את הזהות.",
           identityLabel: "החשבון לא אומת",
+          grantMessage: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.",
           tone: "error",
           checkedAt: new Date().toISOString(),
         });
@@ -173,9 +174,9 @@ function ConnectPage() {
       }
       const text = instagramPermissionText(result.body);
       const checkedAt = typeof result.body.checkedAt === "string" ? result.body.checkedAt : new Date().toISOString();
-      setPermissionView({ message: text.message, identityLabel: text.identityLabel, tone: text.tone, checkedAt });
+      setPermissionView({ message: text.message, identityLabel: text.identityLabel, grantMessage: text.grantMessage, tone: text.tone, checkedAt });
     } catch {
-      setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", tone: "info", checkedAt: new Date().toISOString() });
+      setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", grantMessage: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.", tone: "info", checkedAt: new Date().toISOString() });
     } finally {
       setPermissionBusy(false);
     }
@@ -264,7 +265,8 @@ function ConnectPage() {
             <article className="rounded-2xl bg-surface p-4 shadow-card" aria-live="polite">
               <p className={connectNoticeClass(permissionView.tone)}>{permissionView.message}</p>
               <p className="mt-2 text-sm">חשבון: {permissionView.identityLabel}</p>
-              <p className="text-sm">הרשאת פרסום: {permissionView.message}</p>
+              <p className="text-sm">מהחיבור שנשמר: {permissionView.grantMessage}</p>
+              <p className="text-sm">בדיקה מקוונת עכשיו: לא בוצעה</p>
               <p className="text-sm">פרסום בפועל: לא נבדק</p>
               <p className="mt-1 text-sm text-muted">
                 בדיקה אחרונה: {new Date(permissionView.checkedAt).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })}

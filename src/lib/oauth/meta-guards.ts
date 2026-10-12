@@ -147,7 +147,37 @@ export function readInstagramUserId(value: unknown): string | null {
   return null;
 }
 
-export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string } | null {
+export type InstagramGrantStatus = "permissions_confirmed" | "permissions_missing" | "permissions_unknown";
+
+const INSTAGRAM_SCOPE_NAME = /^[a-z0-9_]{1,64}$/;
+
+/** Parses the documented comma-separated permissions string. Any other shape is unknown, not a denial. */
+export function readInstagramGrant(value: unknown): { status: InstagramGrantStatus; granted: string[] } {
+  if (typeof value !== "string" || value.trim() === "") return { status: "permissions_unknown", granted: [] };
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => !INSTAGRAM_SCOPE_NAME.test(part))) return { status: "permissions_unknown", granted: [] };
+  const granted = [...new Set(parts)];
+  if (granted.includes("instagram_business_content_publish")) return { status: "permissions_confirmed", granted };
+  return { status: "permissions_missing", granted };
+}
+
+export function readStoredInstagramGrant(payload: unknown): {
+  status: InstagramGrantStatus;
+  source: "oauth_exchange" | "preserved_on_refresh" | "not_stored";
+  granted: string[];
+} {
+  if (!payload || typeof payload !== "object") return { status: "permissions_unknown", source: "not_stored", granted: [] };
+  const row = payload as Record<string, unknown>;
+  if (!("grantStatus" in row) && !("grantedPermissions" in row)) return { status: "permissions_unknown", source: "not_stored", granted: [] };
+  const source = row.grantSource === "oauth_exchange" || row.grantSource === "preserved_on_refresh" ? row.grantSource : "not_stored";
+  if (!Array.isArray(row.grantedPermissions) || row.grantedPermissions.some((item) => typeof item !== "string")) {
+    return { status: "permissions_unknown", source, granted: [] };
+  }
+  const parsed = readInstagramGrant(row.grantedPermissions.join(","));
+  return { status: parsed.status, source, granted: parsed.granted };
+}
+
+export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string; grant: { status: InstagramGrantStatus; granted: string[] } } | null {
   if (!payload || typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
   const entry = Array.isArray(record.data) ? record.data[0] : record;
@@ -156,7 +186,7 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
   const accessToken = typeof row.access_token === "string" ? row.access_token : "";
   const userId = readInstagramUserId(row.user_id);
   if (!accessToken || !userId) return null;
-  return { accessToken, userId };
+  return { accessToken, userId, grant: readInstagramGrant("permissions" in row ? row.permissions : undefined) };
 }
 
 export function instagramUsername(value: unknown): string | null {
