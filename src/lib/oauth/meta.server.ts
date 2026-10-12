@@ -14,6 +14,7 @@ import {
   selectionAllowed,
   sha256Hex,
   visiblePendingAccounts,
+  publicInstagramAccountId,
 } from "@/lib/oauth/meta-guards";
 
 const STATE_COOKIE = "klyvona_meta_oauth";
@@ -366,10 +367,14 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
       reason: row.reason,
       externalAccountId: row.externalAccountId,
     })),
-    connected: saved.map((row) => ({
-      platform: row.platform,
-      externalAccountId: row.external_account_id,
-    })),
+    connected: saved.map((row) => {
+      const shown = publicInstagramAccountId(row.external_account_id, process.env.INSTAGRAM_APP_ID ?? "");
+      return {
+        platform: row.platform,
+        externalAccountId: shown.externalAccountId,
+        trusted: shown.trusted,
+      };
+    }),
   });
 }
 

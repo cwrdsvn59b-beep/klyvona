@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { sealSecret, openSecret } from "../crypto/tokens.server.ts";
+import { instagramCardText } from "./connect-session.ts";
 import {
   INSTAGRAM_SCOPES,
   classifyAccounts,
@@ -13,7 +14,12 @@ import {
   instagramConfigProblem,
   instagramConnectReturn,
   metaConfigProblem,
+  preserveInstagramIds,
+  publicInstagramAccountId,
+  readInstagramProfile,
   readInstagramShortToken,
+  readInstagramUserId,
+  resolveInstagramAccount,
   secretMatches,
   selectionAllowed,
   sha256Hex,
@@ -199,6 +205,20 @@ describe("instagram login", () => {
     assert.equal(instagramAccountEligible(null), false);
     assert.equal(instagramAccountEligible(""), false);
     assert.equal(instagramAccountEligible("UNKNOWN"), false);
+    const appId = "39264341293211040";
+    const rawUser = '{"data":[{"access_token":"short","user_id":17841400000000001}]}';
+    assert.notEqual(String(JSON.parse(rawUser).data[0].user_id), "17841400000000001");
+    assert.equal(readInstagramShortToken(JSON.parse(preserveInstagramIds(rawUser)))?.userId, "17841400000000001");
+    assert.equal(readInstagramUserId(JSON.parse(rawUser).data[0].user_id), null);
+    const saved = resolveInstagramAccount({ tokenUserId: appId, profileUserId: "17841400000000001", appId });
+    assert.equal(saved.ok, true);
+    if (saved.ok) assert.equal(saved.userId, "17841400000000001");
+    const rejected = resolveInstagramAccount({ tokenUserId: appId, profileUserId: appId, appId });
+    assert.deepEqual(rejected, { ok: false, reason: "app_id" });
+    assert.deepEqual(resolveInstagramAccount({ tokenUserId: appId, profileUserId: null, appId }), { ok: false, reason: "app_id" });
+    assert.equal(readInstagramProfile({ user_id: "17841400000000001", username: "klyvona_business", account_type: "BUSINESS" }).userId, "17841400000000001");
+    assert.deepEqual(publicInstagramAccountId(appId, appId), { externalAccountId: "", trusted: false });
+    assert.equal(instagramCardText({ externalAccountId: "", trusted: false }).detail.includes(appId), false);
   });
 });
 

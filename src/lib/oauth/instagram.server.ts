@@ -13,7 +13,10 @@ import {
   instagramCallbackUrl,
   instagramConfigProblem,
   instagramConnectReturn,
+  preserveInstagramIds,
+  readInstagramProfile,
   readInstagramShortToken,
+  resolveInstagramAccount,
   secretMatches,
   sha256Hex,
 } from "@/lib/oauth/meta-guards";
@@ -33,7 +36,7 @@ export type InstagramGraph = {
     appSecret: string;
   }): Promise<{ accessToken: string; expiresIn: number | null }>;
   refresh(token: string): Promise<{ accessToken: string; expiresIn: number | null }>;
-  profile(token: string): Promise<{ username: string; accountType: string | null }>;
+  profile(token: string): Promise<{ username: string; accountType: string | null; userId: string | null }>;
 };
 
 function appCredentials() {
@@ -63,8 +66,14 @@ function noStore(body: unknown, status = 200, extra?: Headers): Response {
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-async function readJson(response: Response): Promise<Record<string, unknown>> {
-  const body = (await response.json()) as Record<string, unknown>;
+async function readInstagramJson(response: Response): Promise<Record<string, unknown>> {
+  const raw = await response.text();
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(preserveInstagramIds(raw)) as Record<string, unknown>;
+  } catch {
+    throw new Error("instagram_request_failed");
+  }
   if (!response.ok || typeof body.error === "object" || typeof body.error_message === "string") {
     throw new Error("instagram_request_failed");
   }
@@ -82,7 +91,7 @@ function tokenResult(payload: Record<string, unknown>) {
 
 export const liveInstagramGraph: InstagramGraph = {
   async exchangeCode(input) {
-    const payload = await readJson(
+    const payload = await readInstagramJson(
       await fetch(INSTAGRAM_TOKEN_URL, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -104,23 +113,19 @@ export const liveInstagramGraph: InstagramGraph = {
     url.searchParams.set("grant_type", "ig_exchange_token");
     url.searchParams.set("client_secret", input.appSecret);
     url.searchParams.set("access_token", input.token);
-    return tokenResult(await readJson(await fetch(url)));
+    return tokenResult(await readInstagramJson(await fetch(url)));
   },
   async refresh(token) {
     const url = new URL(`${INSTAGRAM_GRAPH_URL}/refresh_access_token`);
     url.searchParams.set("grant_type", "ig_refresh_token");
     url.searchParams.set("access_token", token);
-    return tokenResult(await readJson(await fetch(url)));
+    return tokenResult(await readInstagramJson(await fetch(url)));
   },
   async profile(token) {
     const url = new URL(`${INSTAGRAM_GRAPH_URL}/me`);
     url.searchParams.set("fields", "user_id,username,account_type");
     url.searchParams.set("access_token", token);
-    const payload = await readJson(await fetch(url));
-    return {
-      username: typeof payload.username === "string" ? payload.username : "",
-      accountType: typeof payload.account_type === "string" ? payload.account_type : null,
-    };
+    return readInstagramProfile(await readInstagramJson(await fetch(url)));
   },
 };
 
@@ -251,9 +256,15 @@ export async function finishInstagramOAuth(
     const shortLived = await graph.exchangeCode({ code, redirectUri, appId, appSecret });
     const longLived = await graph.exchangeLongLived({ token: shortLived.accessToken, appSecret });
     const profile = await graph.profile(longLived.accessToken);
+    const identity = resolveInstagramAccount({
+      tokenUserId: shortLived.userId,
+      profileUserId: profile.userId,
+      appId,
+    });
+    if (!identity.ok) throw new Error("instagram_identity_rejected");
     const eligible = instagramAccountEligible(profile.accountType);
     const packed = eligible
-      ? await sealSecret(JSON.stringify({ v: 2, userToken: longLived.accessToken, igUserId: shortLived.userId }))
+      ? await sealSecret(JSON.stringify({ v: 2, userToken: longLived.accessToken, igUserId: identity.userId }))
       : null;
     const expiresAt = longLived.expiresIn ? new Date(Date.now() + longLived.expiresIn * 1000).toISOString() : null;
     const pendingUntil = new Date(Date.now() + PENDING_TTL_MS).toISOString();
@@ -261,7 +272,7 @@ export async function finishInstagramOAuth(
       select id from oauth_pending_accounts
       where client_id = ${row.client_id}
         and platform = 'instagram'
-        and external_account_id = ${shortLived.userId}
+        and external_account_id = ${identity.userId}
       order by created_at desc
       limit 1
     `;
@@ -269,7 +280,7 @@ export async function finishInstagramOAuth(
       await sql`
         update oauth_pending_accounts
         set state_id = ${parsed.id},
-            display_name = ${profile.username || shortLived.userId},
+            display_name = ${profile.username || identity.userId},
             eligible = ${eligible},
             ineligible_reason = ${eligible ? null : "חשבון Instagram אינו מקצועי."},
             token_ciphertext = ${packed},
@@ -288,8 +299,8 @@ export async function finishInstagramOAuth(
           ${row.client_id},
           ${parsed.id},
           ${"instagram"},
-          ${shortLived.userId},
-          ${profile.username || shortLived.userId},
+          ${identity.userId},
+          ${profile.username || identity.userId},
           ${eligible},
           ${eligible ? null : "חשבון Instagram אינו מקצועי."},
           ${packed},

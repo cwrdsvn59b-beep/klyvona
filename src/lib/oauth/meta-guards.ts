@@ -136,6 +136,17 @@ export function instagramConnectReturn(outcome: InstagramCallbackOutcome): strin
   return `/connect?error=${outcome}`;
 }
 
+/** Keep Instagram ids as strings. JSON numbers above 2^53-1 are rounded. */
+export function preserveInstagramIds(raw: string): string {
+  return raw.replace(/"(user_id|id)"\s*:\s*(\d{1,32})/g, '"$1":"$2"');
+}
+
+export function readInstagramUserId(value: unknown): string | null {
+  if (typeof value === "string" && /^\d{1,32}$/.test(value)) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
+  return null;
+}
+
 export function readInstagramShortToken(payload: unknown): { accessToken: string; userId: string } | null {
   if (!payload || typeof payload !== "object") return null;
   const record = payload as Record<string, unknown>;
@@ -143,10 +154,52 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
   if (!entry || typeof entry !== "object") return null;
   const row = entry as Record<string, unknown>;
   const accessToken = typeof row.access_token === "string" ? row.access_token : "";
-  const userId =
-    typeof row.user_id === "string" || typeof row.user_id === "number" ? String(row.user_id) : "";
+  const userId = readInstagramUserId(row.user_id);
   if (!accessToken || !userId) return null;
   return { accessToken, userId };
+}
+
+export function readInstagramProfile(payload: unknown): {
+  username: string;
+  accountType: string | null;
+  userId: string | null;
+} {
+  if (!payload || typeof payload !== "object") return { username: "", accountType: null, userId: null };
+  const record = payload as Record<string, unknown>;
+  const entry = Array.isArray(record.data) ? record.data[0] : record;
+  if (!entry || typeof entry !== "object") return { username: "", accountType: null, userId: null };
+  const row = entry as Record<string, unknown>;
+  return {
+    username: typeof row.username === "string" ? row.username : "",
+    accountType: typeof row.account_type === "string" ? row.account_type : null,
+    userId: readInstagramUserId(row.user_id),
+  };
+}
+
+/**
+ * Token exchange returns an app-scoped id. Publishing uses /me user_id.
+ * Those two ids are allowed to differ. Neither may be the Instagram app id.
+ */
+export function resolveInstagramAccount(input: {
+  tokenUserId: string | null;
+  profileUserId: string | null;
+  appId: string;
+}): { ok: true; userId: string } | { ok: false; reason: "app_id" | "missing" } {
+  const appId = input.appId.trim();
+  const profile = readInstagramUserId(input.profileUserId);
+  if (profile && appId && profile === appId) return { ok: false, reason: "app_id" };
+  if (!profile) {
+    const token = readInstagramUserId(input.tokenUserId);
+    if (token && appId && token === appId) return { ok: false, reason: "app_id" };
+    return { ok: false, reason: "missing" };
+  }
+  return { ok: true, userId: profile };
+}
+
+export function publicInstagramAccountId(storedId: string, appId: string): { externalAccountId: string; trusted: boolean } {
+  const id = storedId.trim();
+  if (!/^\d{1,32}$/.test(id) || (appId.trim() && id === appId.trim())) return { externalAccountId: "", trusted: false };
+  return { externalAccountId: id, trusted: true };
 }
 
 export function instagramAccountEligible(accountType: string | null): boolean {

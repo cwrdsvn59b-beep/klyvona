@@ -11,6 +11,7 @@ import {
   connectNoticeClass,
   connectResultAccepted,
   connectedFromBody,
+  instagramCardText,
   instagramConnectLists,
   readConnectReceipt,
   type ConnectReceipt,
@@ -201,15 +202,20 @@ function ConnectPage() {
           <Button variant="secondary" disabled={busy} onClick={() => load()}>
             הצגת חשבונות שאושרו
           </Button>
-          {connected.map((item) => (
-            <article key={`${item.platform}:${item.externalAccountId}`} className="rounded-2xl bg-surface p-4 shadow-card">
-              <p className="font-semibold capitalize">{item.platform}</p>
-              <p className="text-sm text-ok">מחובר</p>
-              <p className="mt-1 break-all text-sm text-muted" dir="ltr">
-                {item.externalAccountId}
-              </p>
-            </article>
-          ))}
+          {connected.map((item) => {
+            const card = instagramCardText(item);
+            return (
+              <article key={`${item.platform}:${item.externalAccountId || card.detail}`} className="rounded-2xl bg-surface p-4 shadow-card">
+                <p className="font-semibold">{card.title}</p>
+                <p className={item.trusted === false ? "text-sm text-danger" : "text-sm text-ok"}>
+                  {item.trusted === false ? "נדרש חיבור מחדש" : "מחובר"}
+                </p>
+                <p className="mt-1 break-all text-sm text-muted" dir="ltr">
+                  {card.detail}
+                </p>
+              </article>
+            );
+          })}
           {accounts.map((account) => (
             <article key={account.id} className="rounded-2xl bg-surface p-4 shadow-card">
               <p className="font-semibold">{account.name}</p>

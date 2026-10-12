@@ -16,6 +16,8 @@ export type ListedAccount = {
 export type ListedConnected = {
   platform: string;
   externalAccountId: string;
+  name?: string;
+  trusted?: boolean;
 };
 
 export const CONNECT_GATE_TEXT = "המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.";
@@ -91,13 +93,27 @@ export function accountsFromBody(body: Record<string, unknown>): ListedAccount[]
   });
 }
 
+export function instagramCardText(item: { name?: string; externalAccountId: string; trusted?: boolean }): {
+  title: string;
+  detail: string;
+} {
+  if (item.trusted === false || !item.externalAccountId) {
+    return { title: "Instagram", detail: "המזהה שנשמר אינו חשבון Instagram. חברו את החשבון מחדש." };
+  }
+  if (item.name) return { title: item.name, detail: `@${item.name}` };
+  return { title: "Instagram", detail: item.externalAccountId };
+}
+
 export function connectedFromBody(body: Record<string, unknown>): ListedConnected[] {
   if (!Array.isArray(body.connected)) return [];
   return body.connected.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const row = item as Partial<ListedConnected>;
     if (typeof row.platform !== "string" || typeof row.externalAccountId !== "string") return [];
-    return [{ platform: row.platform, externalAccountId: row.externalAccountId }];
+    const account: ListedConnected = { platform: row.platform, externalAccountId: row.externalAccountId };
+    if (typeof row.name === "string" && row.name.trim()) account.name = row.name.trim();
+    if (typeof row.trusted === "boolean") account.trusted = row.trusted;
+    return [account];
   });
 }
 
