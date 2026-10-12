@@ -1,93 +1,79 @@
-# Проверка коммита ec837ad
+# Диагностика: permissions после повторной авторизации Instagram
 
-Код: [`ec837ad`](https://github.com/cwrdsvn59b-beep/klyvona/commit/ec837ad513c75ba92aeecfbe42516941a4a3a957)
+Дата: 2026-10-12
 
-Дата проверки: 2026-10-12
+Код, база Neon, Meta API и публикация сайта не изменялись. Это только отчёт.
 
-Файлы коммита сверены с рабочей копией. Во время проверки код, база, секреты и Meta API не изменялись. Deployment не выполнялся.
+## 1. Подтверждённая причина
 
-## Технология
+Показанный текст доказывает только одно: проверка прочитала токен, который последним записала функция обновления, а не свежий ответ OAuth. Почему после нажатия кнопки подтверждения в базе остался именно он, без записи в Neon установить нельзя.
 
-Стек приложения не менялся: TanStack Start, серверный Instagram Login, AES-256-GCM и Neon PostgreSQL.
+Две строки появляются вместе только из одного ответа сервера:
 
-Instagram Login возвращает фактически выданные права только при обмене authorization code. Документация доступна: [Business Login for Instagram](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login). Поле `permissions` — строка через запятую внутри `data[0]`:
+- `grantAtConnection: "permissions_unknown"`
+- `grantSource: "preserved_on_refresh"`
 
-```json
-{
-  "data": [
-    {
-      "access_token": "...",
-      "user_id": "1020...",
-      "permissions": "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish"
-    }
-  ]
-}
-```
+Это собрано в `src/lib/oauth/connect-session.ts` на строках 221–234. Вторая фраза добавляется исключительно при `preserved_on_refresh`.
 
-Долгоживущий обмен и refresh это поле не возвращают.
+Такой источник записывает только `instagramRenewWrite()` в `src/lib/oauth/instagram-renew.ts` на строках 46–50. Callback OAuth всегда ставит `oauth_exchange` (`src/lib/oauth/instagram.server.ts`, строки 321–326). Подтверждение копирует зашифрованный payload как есть и само источник не меняет (`src/lib/oauth/meta.server.ts`, строки 429–446).
 
-Разбор в `src/lib/oauth/meta-guards.ts` принимает только такую строку:
+Локально на фиктивных данных это воспроизведено. Свежий OAuth без поля `permissions` даёт `permissions_unknown` и `oauth_exchange`, без фразы про обновление токена. Если этот payload затем проходит через обновление токена, источник становится `preserved_on_refresh`, а статус остаётся неизвестным. Экран показывает ровно оба текста.
 
-- `permissions_confirmed` — в строке есть `instagram_business_content_publish`;
-- `permissions_missing` — строка разобрана, но права публикации в ней нет;
-- `permissions_unknown` — поля нет, это массив или формат не совпадает с документацией.
+Не доказано, какой из двух путей произошёл у @klyvona_business:
 
-Нормализованный список и источник (`oauth_exchange` или `preserved_on_refresh`) пишутся только в зашифрованный payload версии v2. Старый payload без этих полей остаётся `permissions_unknown` и не требует reconnect. Refresh копирует сохранённый список и помечает источник `preserved_on_refresh`. Это не новая проверка Meta.
+- после подтверждения кто-то снова выполнил «חידוש הרשאת Instagram»;
+- подтверждение не заменило уже обновлённый старый токен, и проверка прочитала его.
 
-`/api/oauth/instagram/permissions` отдаёт в браузер только статусы: `grantAtConnection`, `grantSource` и `liveRecheck: "not_performed"`. Токен и сырой список прав в ответ не входят. Историческая запись не превращается в онлайн-статус `permission_confirmed`.
+Производственная строка не читалась.
 
-Изменённые файлы коммита `ec837ad`:
+## 2. Что проверено по цепочке
 
-- `src/lib/oauth/meta-guards.ts`
-- `src/lib/oauth/meta-guards.test.ts`
-- `src/lib/oauth/instagram-renew.ts`
-- `src/lib/oauth/instagram-renew.test.ts`
-- `src/lib/oauth/instagram.server.ts`
-- `src/lib/oauth/instagram-permissions.integration.test.ts`
-- `src/lib/oauth/connect-session.ts`
-- `src/routes/connect.tsx`
+Официальный обмен кода Instagram Login возвращает `permissions` строкой внутри `data[0]`. Долгоживущий обмен и refresh этого поля не возвращают.
 
-Redirect URI и запрашиваемые scope не менялись. Make, Facebook, тарифы и данные клиентов не затрагивались.
-
-## Результаты проверки
-
-| Команда | Код выхода | Результат |
+| Участок | Строки | Результат |
 |---|---|---|
-| `npm run typecheck` | 0 | Ошибок TypeScript нет |
-| `npm run lint` | 0 | Замечаний ESLint нет |
-| Целевые тесты Instagram | 0 | 36 из 36 прошли, 0 упали |
-| `npm test` | 1 | 195 прошли, 13 упали |
-| `npm run build:check` | 0 | Сборка завершилась. Миграция не запускалась |
+| `exchangeCode()` читает `data[0]`, иначе сам объект | `instagram.server.ts` 122–138, `meta-guards.ts` 180–189 | Для документированной формы ошибки нет |
+| Нет поля, пустая строка или массив | `meta-guards.ts` 155–161 | `permissions_unknown`, не отказ |
+| `preserveInstagramIds()` | `meta-guards.ts` 140–142 | Меняет только `user_id` и `id`, строку прав не портит |
+| `instagramTokenPayload()` при неизвестном статусе | `instagram-renew.ts` 24–28 | Пишет `grantStatus`, но не пишет `grantedPermissions` |
+| `readStoredInstagramGrant()` | `meta-guards.ts` 164–177 | Без массива статус неизвестен, но источник сохраняется |
+| Callback сохраняет payload в pending | `instagram.server.ts` 339–350 | Новый ciphertext записывается и при повторном OAuth |
+| Кнопка вызывает `/api/oauth/meta/select` | `connect.tsx` 185–195 | При неуспехе показывает ошибку, не «сохранено» |
+| Проверка читает только `social_accounts` | `instagram.server.ts` 455–489 | Базу не меняет; `liveRecheck` всегда `not_performed` |
+| Обновление токена переписывает `social_accounts` | `instagram.server.ts` 537–553 | Заменяет payload и ставит `preserved_on_refresh` |
 
-Целевая команда:
+Кэш интерфейса эту пару строк сам не создаёт: текст берётся из последнего ответа проверки. Отдельной старой записи Instagram у клиента нет: на пару клиент и платформа одна строка.
 
-```bash
-node --experimental-strip-types --import ./scripts/register-alias.mjs --test \
-  src/lib/oauth/meta-guards.test.ts \
-  src/lib/oauth/instagram-renew.test.ts \
-  src/lib/oauth/instagram-permissions.integration.test.ts \
-  src/lib/oauth/instagram-identity.integration.test.ts \
-  src/lib/oauth/instagram-verify.integration.test.ts
-```
+Гонка возможна, но не доказана. Подтверждение и проверка — разные запросы. Если проверка ушла раньше, чем подтверждение записалось, она увидит предыдущий токен.
 
-`npm test` запускает `scripts/**/*.test.mjs` и из-за `&&` не доходит до тестов `src/`, когда шаблонные проверки падают. Упавшие 13 проверок не относятся к Instagram:
+## 3. Путь данных
 
-- the build side resolves the template's shipped app-env
-- platform chrome overwrites share-card metas and always sets og:title
-- published grok.me slug is still a title fallback
-- emits og:image for a public host and prefers a custom card
-- placeholder og:image appends site.color when it is 6-digit hex
-- document title entities are not double-escaped on og:title
-- injects into documents with no head element
-- streaming injector matches `</HEAD>` case-insensitively
-- uses the app name in the injected title tag
-- the auth schema ships outside the globbed directory
-- the template ships auth off
-- the wrapped command runs with the app env applied
-- the CLI still runs when invoked through a symlinked path
+Meta `POST /oauth/access_token` → `readInstagramShortToken()` → `readInstagramGrant()` → долгоживущий токен без поля `permissions` → `instagramTokenPayload(source: "oauth_exchange")` → `sealSecret()` → `oauth_pending_accounts`.
 
-`build:check` выводит предупреждения Rolldown о директиве `"use client"` в `@tanstack/react-router`. Код выхода при этом 0.
+Кнопка «אישור עדכון ההרשאה» → `selectPendingAccount()` копирует этот ciphertext в существующую строку `social_accounts` только при том же Instagram ID.
 
-## Ограничение
+«בדיקת הרשאות פרסום» → `checkInstagramPublishPermission()` → `readStoredInstagramGrant()` → текст на экране.
 
-Текущий токен @klyvona_business не содержит сохранённый список прав. До следующего входа после публикации `ec837ad` проверка покажет `permissions_unknown`. Даже `permissions_confirmed` означает только ответ Meta в момент подключения, а не повторную онлайн-проверку.
+`preserved_on_refresh` появляется только если после этого, или вместо этого, отработал `renewInstagram()`.
+
+## 4. Как воспроизвести изолированно
+
+Фиктивный ответ без `permissions` → payload OAuth → `instagramRenewWrite()` с этим payload как `previous` → `readStoredInstagramGrant()` → `instagramPermissionText()`. Этот прогон уже выполнен, код выхода 0.
+
+Отдельного теста «старый токен → обновление → новый OAuth того же ID → подтверждение → проверка» в репозитории нет. Текущий интеграционный тест подтверждает только копирование уже готового payload с `oauth_exchange`.
+
+## 5. Минимальное исправление, пока не делать
+
+Не переписывать источник на `preserved_on_refresh`, если сохранённый статус `permissions_unknown`: обновление токена не получает новый список от Meta и не должно выглядеть как объяснение нового входа. После успешного подтверждения проверка должна показывать источник payload из pending. Добавить цепочечный тест. Существующие подключения не удалять и не перешифровывать.
+
+## 6. Какие данные нужны
+
+Без токенов и ключей достаточно ответа проверки: `grantAtConnection`, `grantSource`, `identity`, `permission`, `liveRecheck`, `checkedAt`. Также: появился ли текст «החשבון נשמר» и нажималась ли отдельно «חידוש הרשאת Instagram».
+
+## 7. Риск
+
+Исправление затрагивает только будущую запись. Уже сохранённый токен сам не изменится и аккаунт не отключится. Ошибочная миграция или ручная замена ciphertext опасны, поэтому их делать не нужно.
+
+## 8. Что выполнено
+
+Выполнен локальный прогон фиктивной цепочки: код выхода 0. База Neon, Meta API, OAuth, публикация и код не изменялись. Интеграционный тест с тестовой базой в этот раз заново не запускался.
