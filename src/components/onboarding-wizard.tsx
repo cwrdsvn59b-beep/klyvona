@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Facebook, Instagram, Music2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Instagram } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/status-pill";
@@ -28,12 +28,6 @@ type Draft = {
 };
 
 type Receipt = Extract<SubmitResult, { ok: true }> & { businessName: string };
-
-const ICONS = {
-  facebook: Facebook,
-  instagram: Instagram,
-  tiktok: Music2,
-} as const;
 
 function emptyDraft(): Draft {
   return {
@@ -263,7 +257,7 @@ function Welcome() {
       </h1>
       <p className="mt-4 text-base leading-relaxed text-muted">
         קלייוונה יוצרת ומתזמנת פוסטים עם תמונה לפי העסק שלכם. במסך הזה משאירים פרטים והעדפות.
-        חיבור Facebook, Instagram ו-TikTok עדיין לא פעיל, ואנחנו לא מבקשים סיסמה.
+        חיבור Instagram נפתח אחרי שהפנייה נשמרת. לא מבקשים סיסמה.
       </p>
       <div className="mt-6 grid gap-3">
         {PLANS.map((plan) => (
@@ -406,17 +400,15 @@ function SocialStep({
     <div>
       <h1 className="text-3xl font-semibold tracking-tight">רשתות חברתיות</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted">
-        החיבור הרשמי ייפתח רק אחרי שמפתחות, הרשאות וכתובת חזרה יאושרו בשרת. עד אז כל רשת נשארת במצב
-        «ממתין להגדרה». אין כאן שדה סיסמה ואין שדה מפתח API.
+        חשבון Instagram מקצועי מחובר אחרי שמירת הפנייה, בלי סיסמה ובלי מפתח API.
       </p>
       <div className="mt-6 grid gap-3">
-        {PLATFORMS.map((platform) => {
-          const Icon = ICONS[platform.id];
+        {PLATFORMS.filter((platform) => platform.id === "instagram").map((platform) => {
           return (
             <article key={platform.id} className="rounded-2xl bg-surface p-4 shadow-card">
               <div className="flex items-center gap-3">
                 <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary-soft text-primary">
-                  <Icon className="size-5" aria-hidden="true" />
+                  <Instagram className="size-5" aria-hidden="true" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <h2 className="font-semibold">{platform.label}</h2>
@@ -424,9 +416,7 @@ function SocialStep({
                 </div>
                 <StatusPill code="awaiting_setup" />
               </div>
-              <Button className="mt-4 w-full" variant="secondary" disabled>
-                בקרוב
-              </Button>
+              <p className="mt-4 text-sm text-muted">החיבור נפתח אחרי שמירת הפנייה.</p>
             </article>
           );
         })}
@@ -598,7 +588,7 @@ function Confirmation({ receipt, onReset }: { receipt: Receipt; onReset: () => v
             : " · ללא עלות"}
           . סטטוס: {statusLabel(receipt.plan.subscriptionStatus)}.
         </li>
-        <li>חיבור Meta נפתח רק אחרי שהפנייה נשמרה, ורק אם השרת מוגדר. TikTok עדיין ממתין. פרסום אוטומטי לא מתחיל.</li>
+        <li>חיבור Instagram נפתח רק אחרי שהפנייה נשמרה, ורק אם השרת מוגדר. פרסום אוטומטי לא מתחיל.</li>
         <li>{VIDEO_NOTE}</li>
         <li>{webhookCopy}</li>
       </ul>
@@ -609,7 +599,7 @@ function Confirmation({ receipt, onReset }: { receipt: Receipt; onReset: () => v
         href="/connect"
         className="mt-6 inline-flex h-12 items-center justify-center rounded-xl bg-primary px-5 text-sm font-semibold text-white"
       >
-        חיבור Facebook ו-Instagram
+        חיבור Instagram
       </a>
       <Button className="mt-3" variant="secondary" onClick={onReset}>
         פנייה חדשה

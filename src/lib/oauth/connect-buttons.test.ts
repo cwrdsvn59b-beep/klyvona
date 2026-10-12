@@ -40,6 +40,10 @@ describe("connect page layout", () => {
     const page = readFileSync(new URL("../../routes/connect.tsx", import.meta.url), "utf8");
     const root = readFileSync(new URL("../../routes/__root.tsx", import.meta.url), "utf8");
     assert.match(page, /max-w-xl px-4/);
+    assert.match(page, /התחברות עם Instagram/);
+    assert.match(page, /אישור ניתוק Instagram/);
+    assert.doesNotMatch(page, /התחברות עם Facebook/);
+    assert.doesNotMatch(page, /ניתוק Facebook/);
     assert.match(page, /grid gap-3/);
     assert.match(root, /dir="rtl"/);
     assert.doesNotMatch(page, /key=\{account\.name\}/);

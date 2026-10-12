@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "@/lib/oauth/connect-buttons";
 
 export const Route = createFileRoute("/connect")({
-  head: () => ({ meta: [{ title: "חיבור Meta · KLYVONA Connect" }] }),
+  head: () => ({ meta: [{ title: "חיבור Instagram · KLYVONA Connect" }] }),
   component: ConnectPage,
 });
 
@@ -32,6 +32,7 @@ function ConnectPage() {
   const pendingRef = useRef<ConnectPlatform | null>(null);
   const savingRef = useRef(false);
   const [pending, setPending] = useState<ConnectPlatform | null>(null);
+  const [confirmOff, setConfirmOff] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem("klyvona-onboarding-receipt");
@@ -44,7 +45,7 @@ function ConnectPage() {
     const code = new URLSearchParams(window.location.search).get("error");
     if (code) setMessage(ERRORS[code] ?? "החיבור לא הושלם.");
     if (new URLSearchParams(window.location.search).get("ready")) {
-      setMessage("בחרו רק עמוד או חשבון Instagram שמופיעים ברשימה.");
+      setMessage("בחרו רק חשבון Instagram שמופיע ברשימה.");
     }
   }, []);
 
@@ -98,8 +99,8 @@ function ConnectPage() {
       setMessage(result?.response.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לטעון חשבונות.");
       return;
     }
-    setAccounts(result.body.accounts ?? []);
-    setConnected(result.body.connected ?? []);
+    setAccounts((result.body.accounts ?? []).filter((account) => account.platform === "instagram"));
+    setConnected((result.body.connected ?? []).filter((item) => item.platform === "instagram"));
   }
 
   async function choose(id: string) {
@@ -130,7 +131,7 @@ function ConnectPage() {
         <BrandMark className="h-12 w-12 rounded-xl" />
         <div>
           <p className="text-lg font-semibold tracking-wide">KLYVONA</p>
-          <p className="text-sm text-muted">חיבור עמוד Facebook או חשבון Instagram מקצועי</p>
+          <p className="text-sm text-muted">חיבור חשבון Instagram מקצועי</p>
         </div>
       </div>
       <h1 className="mt-8 text-3xl font-semibold tracking-tight">חשבונות שבשליטתכם</h1>
@@ -142,13 +143,6 @@ function ConnectPage() {
         <p className="mt-6 text-sm">המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.</p>
       ) : (
         <div className="mt-6 grid gap-3">
-          <Button
-            disabled={oauthButtonBusy(pending, "facebook")}
-            aria-busy={oauthButtonBusy(pending, "facebook")}
-            onClick={() => start("facebook")}
-          >
-            התחברות עם Facebook
-          </Button>
           <Button
             disabled={oauthButtonBusy(pending, "instagram")}
             aria-busy={oauthButtonBusy(pending, "instagram")}
@@ -181,18 +175,25 @@ function ConnectPage() {
             </article>
           ))}
           <div className="mt-2 grid gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/meta/renew", "facebook")}>
-              חידוש הרשאת Facebook
-            </Button>
             <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/meta/renew", "instagram")}>
               חידוש הרשאת Instagram
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/meta/disconnect", "facebook")}>
-              ניתוק Facebook
-            </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => act("/api/oauth/meta/disconnect", "instagram")}>
-              ניתוק Instagram
-            </Button>
+            {confirmOff ? (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmOff(false);
+                  void act("/api/oauth/meta/disconnect", "instagram");
+                }}
+              >
+                אישור ניתוק Instagram
+              </Button>
+            ) : (
+              <Button variant="secondary" disabled={busy} onClick={() => setConfirmOff(true)}>
+                ניתוק Instagram
+              </Button>
+            )}
           </div>
         </div>
       )}
