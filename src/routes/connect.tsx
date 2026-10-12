@@ -3,15 +3,25 @@ import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "@/lib/oauth/connect-buttons";
+import {
+  accountsFromBody,
+  callConnect,
+  canConnectInThisBrowser,
+  connectedFromBody,
+  instagramConnectLists,
+  readConnectReceipt,
+  type ConnectReceipt,
+  type ListedAccount,
+  type ListedConnected,
+} from "@/lib/oauth/connect-session";
 
 export const Route = createFileRoute("/connect")({
   head: () => ({ meta: [{ title: "חיבור Instagram · KLYVONA Connect" }] }),
   component: ConnectPage,
 });
 
-type Receipt = { reference?: string; connectSecret?: string; businessName?: string };
-type Account = { id: string; platform: string; name: string; eligible: boolean; reason: string | null };
-type Connected = { platform: string; externalAccountId: string };
+type Account = ListedAccount;
+type Connected = ListedConnected;
 
 const ERRORS: Record<string, string> = {
   denied: "החיבור בוטל.",
@@ -24,7 +34,7 @@ const ERRORS: Record<string, string> = {
 };
 
 function ConnectPage() {
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [receipt, setReceipt] = useState<ConnectReceipt | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [connected, setConnected] = useState<Connected[]>([]);
   const [message, setMessage] = useState("");
@@ -35,13 +45,8 @@ function ConnectPage() {
   const [confirmOff, setConfirmOff] = useState(false);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem("klyvona-onboarding-receipt");
-    if (!raw) return;
-    try {
-      setReceipt(JSON.parse(raw) as Receipt);
-    } catch {
-      setReceipt(null);
-    }
+    const stored = readConnectReceipt(sessionStorage.getItem("klyvona-onboarding-receipt"));
+    setReceipt(stored);
     const code = new URLSearchParams(window.location.search).get("error");
     if (code) setMessage(ERRORS[code] ?? "החיבור לא הושלם.");
     if (new URLSearchParams(window.location.search).get("ready")) {
@@ -54,20 +59,14 @@ function ConnectPage() {
   }, [receipt?.reference]);
 
   async function post(path: string, extra: Record<string, string> = {}) {
-    if (!receipt?.reference || !receipt.connectSecret) return null;
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reference: receipt.reference, connectSecret: receipt.connectSecret, ...extra }),
-    });
-    const body = (await response.json()) as {
-      authorizeUrl?: string;
-      accounts?: Account[];
-      connected?: Connected[];
-      message?: string;
-      error?: string;
-    };
-    return { response, body };
+    if (!receipt || !canConnectInThisBrowser(JSON.stringify(receipt))) return null;
+    return callConnect(fetch, path, receipt, extra);
+  }
+
+  function applyLists(body: Record<string, unknown>) {
+    const lists = instagramConnectLists(accountsFromBody(body), connectedFromBody(body));
+    setAccounts(lists.accounts);
+    setConnected(lists.connected);
   }
 
   async function start(platform: ConnectPlatform) {
@@ -78,12 +77,16 @@ function ConnectPage() {
     try {
       const result = await post(`/api/oauth/${platform}/start`);
       if (!result) return;
-      if (result.response.status === 503) {
+      if (result.networkError) {
+        setMessage("אין חיבור לשרת. נסו שוב.");
+        return;
+      }
+      if (result.status === 503) {
         setMessage("החיבור עדיין ממתין להגדרה בשרת. לא נוצר חיבור מדומה.");
         return;
       }
-      if (!result.response.ok || !result.body.authorizeUrl) {
-        setMessage("לא ניתן לפתוח את Meta. בדקו שהפנייה נשמרה בדפדפן הזה.");
+      if (!result.ok || typeof result.body.authorizeUrl !== "string") {
+        setMessage("לא ניתן לפתוח את Instagram. בדקו שהפנייה נשמרה בדפדפן הזה.");
         return;
       }
       window.location.assign(result.body.authorizeUrl);
@@ -93,36 +96,64 @@ function ConnectPage() {
     }
   }
 
-  async function load() {
-    const result = await post("/api/oauth/meta/accounts");
-    if (!result || !result.response.ok) {
-      setMessage(result?.response.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לטעון חשבונות.");
-      return;
+  async function load(quiet = false) {
+    try {
+      const result = await post("/api/oauth/meta/accounts");
+      if (!result) return false;
+      if (result.networkError) {
+        setMessage("אין חיבור לשרת. נסו שוב.");
+        return false;
+      }
+      if (!result.ok) {
+        if (!quiet) setMessage(result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לטעון חשבונות.");
+        return false;
+      }
+      applyLists(result.body);
+      return true;
+    } catch {
+      setMessage("אין חיבור לשרת. נסו שוב.");
+      return false;
     }
-    setAccounts((result.body.accounts ?? []).filter((account) => account.platform === "instagram"));
-    setConnected((result.body.connected ?? []).filter((item) => item.platform === "instagram"));
   }
 
   async function choose(id: string) {
     if (savingRef.current) return;
     savingRef.current = true;
     setBusy(true);
-    const result = await post("/api/oauth/meta/select", { pendingId: id });
-    setBusy(false);
-    savingRef.current = false;
-    if (!result?.response.ok) {
-      setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
-      return;
+    try {
+      const result = await post("/api/oauth/meta/select", { pendingId: id });
+      if (!result || result.networkError || !result.ok) {
+        setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
+        return;
+      }
+      setMessage("החשבון נשמר. האסימון נשאר בשרת.");
+      const refreshed = await load(true);
+      if (!refreshed) setMessage("החשבון נשמר, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.");
+    } catch {
+      setMessage("אין חיבור לשרת. נסו שוב.");
+    } finally {
+      setBusy(false);
+      savingRef.current = false;
     }
-    setMessage("החשבון נשמר. האסימון נשאר בשרת.");
-    await load();
   }
 
   async function act(path: string, platform: string) {
     setBusy(true);
-    const result = await post(path, { platform });
-    setBusy(false);
-    setMessage(result?.response.ok ? "הפעולה נשמרה." : "הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
+    try {
+      const result = await post(path, { platform });
+      if (!result || result.networkError || !result.ok) {
+        setMessage("הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
+        return;
+      }
+      setMessage("הפעולה נשמרה.");
+      const refreshed = await load(true);
+      if (!refreshed) setMessage("הפעולה נשמרה, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.");
+    } catch {
+      setMessage("אין חיבור לשרת. נסו שוב.");
+    } finally {
+      setBusy(false);
+      setConfirmOff(false);
+    }
   }
 
   return (
@@ -179,16 +210,20 @@ function ConnectPage() {
               חידוש הרשאת Instagram
             </Button>
             {confirmOff ? (
-              <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() => {
-                  setConfirmOff(false);
-                  void act("/api/oauth/meta/disconnect", "instagram");
-                }}
-              >
-                אישור ניתוק Instagram
-              </Button>
+              <div className="grid gap-2">
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    void act("/api/oauth/meta/disconnect", "instagram");
+                  }}
+                >
+                  אישור ניתוק Instagram
+                </Button>
+                <Button variant="secondary" disabled={busy} onClick={() => setConfirmOff(false)}>
+                  ביטול
+                </Button>
+              </div>
             ) : (
               <Button variant="secondary" disabled={busy} onClick={() => setConfirmOff(true)}>
                 ניתוק Instagram

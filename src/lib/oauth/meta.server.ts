@@ -363,6 +363,7 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
       name: row.name,
       eligible: row.eligible,
       reason: row.reason,
+      externalAccountId: row.externalAccountId,
     })),
     connected: saved.map((row) => ({
       platform: row.platform,

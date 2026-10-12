@@ -42,6 +42,8 @@ describe("connect page layout", () => {
     assert.match(page, /max-w-xl px-4/);
     assert.match(page, /התחברות עם Instagram/);
     assert.match(page, /אישור ניתוק Instagram/);
+    assert.match(page, /ביטול/);
+    assert.match(page, /await load\(true\)/);
     assert.doesNotMatch(page, /התחברות עם Facebook/);
     assert.doesNotMatch(page, /ניתוק Facebook/);
     assert.match(page, /grid gap-3/);
