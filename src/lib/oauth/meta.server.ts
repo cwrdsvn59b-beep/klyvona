@@ -8,11 +8,10 @@ import {
   classifyAccounts,
   evaluateOAuthState,
   facebookAuthorizeUrl,
-  customerAccountConfigProblem,
+  instagramConfigProblem,
   metaConfigProblem,
   secretMatches,
   selectionAllowed,
-  selectionWriteSucceeded,
   sha256Hex,
   visiblePendingAccounts,
 } from "@/lib/oauth/meta-guards";
@@ -315,7 +314,7 @@ export async function finishMetaOAuth(
 }
 
 export async function listPendingAccounts(request: Request): Promise<Response> {
-  if (customerAccountConfigProblem()) return disabled("instagram");
+  if (instagramConfigProblem()) return disabled("instagram");
   const parsed = await readConnectBody(request);
   if (!parsed) return noStore({ error: "unauthorized" }, 401);
   const sql = await getSql();
@@ -331,7 +330,7 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
     select id, platform, external_account_id, display_name, eligible, ineligible_reason,
       created_at::text as created_at
     from oauth_pending_accounts
-    where client_id = ${parsed.client.id} and expires_at > now()
+    where client_id = ${parsed.client.id} and platform = 'instagram' and expires_at > now()
   `;
   const saved = await sql<{ platform: string; external_account_id: string }>`
     select platform, external_account_id
@@ -339,7 +338,7 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
     where client_id = ${parsed.client.id}
       and status = 'connected'
       and external_account_id is not null
-      and platform in ('facebook', 'instagram')
+      and platform = 'instagram'
   `;
   const visible = visiblePendingAccounts(
     rows.map((row) => ({
@@ -375,7 +374,7 @@ export async function listPendingAccounts(request: Request): Promise<Response> {
 }
 
 export async function selectPendingAccount(request: Request): Promise<Response> {
-  if (customerAccountConfigProblem()) return disabled("instagram");
+  if (instagramConfigProblem()) return disabled("instagram");
   const parsed = await readConnectBody(request);
   if (!parsed?.pendingId) return noStore({ error: "unauthorized" }, 401);
   const sql = await getSql();
@@ -400,6 +399,7 @@ export async function selectPendingAccount(request: Request): Promise<Response> 
     eligible: pending.eligible,
     expired: new Date(pending.expires_at).getTime() <= Date.now(),
   });
+  if (pending.platform !== "instagram") return noStore({ error: "unsupported_platform" }, 403);
   if (verdict !== "ok" || !pending.token_ciphertext) return noStore({ error: verdict }, 403);
   const updated = await sql<{ platform: string }>`
     update social_accounts
@@ -412,7 +412,7 @@ export async function selectPendingAccount(request: Request): Promise<Response> 
     where client_id = ${parsed.client.id} and platform = ${pending.platform}
     returning platform
   `;
-  if (!selectionWriteSucceeded(updated)) return noStore({ error: "not_saved" }, 409);
+  if (!updated[0]) return noStore({ error: "missing_social_account" }, 409);
   await sql`delete from oauth_pending_accounts where id = ${parsed.pendingId}`;
   return noStore({ ok: true, platform: updated[0].platform });
 }

@@ -99,11 +99,6 @@ export function instagramConfigProblem(env: NodeJS.ProcessEnv = process.env): st
   return null;
 }
 
-/** Customer account list and save follow Instagram, not the Facebook app. */
-export function customerAccountConfigProblem(env: NodeJS.ProcessEnv = process.env): string | null {
-  return instagramConfigProblem(env);
-}
-
 export function instagramCallbackUrl(request: Request, env: NodeJS.ProcessEnv = process.env): string | null {
   const explicit = env.META_OAUTH_REDIRECT_ORIGIN?.trim() || env.BETTER_AUTH_URL?.trim();
   const origin = explicit ? explicit.replace(/\/$/, "") : instagramConfigProblem(env) ? null : new URL(request.url).origin;
@@ -155,8 +150,8 @@ export function readInstagramShortToken(payload: unknown): { accessToken: string
 }
 
 export function instagramAccountEligible(accountType: string | null): boolean {
-  if (!accountType?.trim()) return false;
-  const value = accountType.trim().toUpperCase();
+  if (!accountType) return false;
+  const value = accountType.toUpperCase();
   return value === "BUSINESS" || value === "MEDIA_CREATOR";
 }
 
@@ -177,10 +172,6 @@ export function evaluateOAuthState(input: {
   if (input.usedAt) return "used";
   if (input.expiresAt.getTime() <= input.now.getTime()) return "expired";
   return "ok";
-}
-
-export function selectionWriteSucceeded(updated: readonly { platform?: string }[]): boolean {
-  return updated.length > 0 && typeof updated[0]?.platform === "string" && updated[0].platform.length > 0;
 }
 
 export function pageCanPublish(tasks: readonly string[]): boolean {

@@ -7,7 +7,6 @@ import {
   classifyAccounts,
   evaluateOAuthState,
   facebookAuthorizeUrl,
-  customerAccountConfigProblem,
   instagramAccountEligible,
   instagramAuthorizeUrl,
   instagramCallbackOutcome,
@@ -17,7 +16,6 @@ import {
   readInstagramShortToken,
   secretMatches,
   selectionAllowed,
-  selectionWriteSucceeded,
   sha256Hex,
   visiblePendingAccounts,
 } from "./meta-guards.ts";
@@ -211,26 +209,20 @@ describe("instagram account save", () => {
       INSTAGRAM_APP_SECRET: "ig-secret",
       TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"),
     } as NodeJS.ProcessEnv;
-    assert.equal(customerAccountConfigProblem(env), null);
+    assert.equal(instagramConfigProblem(env), null);
     assert.match(metaConfigProblem(env) ?? "", /Meta app credentials/);
     const source = readFileSync(new URL("./meta.server.ts", import.meta.url), "utf8");
     const list = source.slice(source.indexOf("export async function listPendingAccounts"), source.indexOf("export async function selectPendingAccount"));
     const select = source.slice(source.indexOf("export async function selectPendingAccount"), source.indexOf("export async function disconnectMeta"));
-    assert.match(list, /customerAccountConfigProblem/);
+    assert.match(list, /instagramConfigProblem/);
     assert.doesNotMatch(list, /metaConfigProblem/);
-    assert.match(select, /customerAccountConfigProblem/);
+    assert.match(list, /platform = 'instagram'/);
+    assert.match(select, /instagramConfigProblem/);
     assert.doesNotMatch(select, /metaConfigProblem/);
-  });
-
-  it("does not report success when the account row was not updated", () => {
-    assert.equal(selectionWriteSucceeded([]), false);
-    assert.equal(selectionWriteSucceeded([{ platform: "" }]), false);
-    assert.equal(selectionWriteSucceeded([{ platform: "instagram" }]), true);
-    const source = readFileSync(new URL("./meta.server.ts", import.meta.url), "utf8");
-    const select = source.slice(source.indexOf("export async function selectPendingAccount"), source.indexOf("export async function disconnectMeta"));
+    assert.match(select, /unsupported_platform/);
     assert.match(select, /returning platform/);
-    assert.match(select, /selectionWriteSucceeded/);
-    assert.match(select, /not_saved/);
+    assert.match(select, /missing_social_account/);
+    assert.doesNotMatch(select, /selectionWriteSucceeded/);
   });
 });
 
