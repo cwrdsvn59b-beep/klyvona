@@ -11,12 +11,15 @@ describe("public legal pages", () => {
   it("keeps the privacy and deletion pages public and free of a made-up address", () => {
     const privacy = source("../routes/privacy.tsx");
     const deletion = source("../routes/data-deletion.tsx");
-    assert.match(privacy, /מדיניות פרטיות – KLYVONA/);
+    const catalog = source("./i18n/he.ts");
+    assert.match(catalog, /מדיניות פרטיות – KLYVONA/);
+    assert.match(catalog, /מחיקת מידע אישי/);
+    assert.match(catalog, /אינה אוטומטית/);
     assert.match(privacy, /LEGAL_UPDATED/);
+    assert.match(privacy, /LanguageSwitcher/);
+    assert.match(deletion, /LanguageSwitcher/);
     assert.equal(LEGAL_UPDATED, "12 באוקטובר 2026");
-    assert.match(deletion, /מחיקת מידע אישי/);
-    assert.match(deletion, /אינה אוטומטית/);
-    for (const page of [privacy, deletion]) {
+    for (const page of [privacy, deletion, catalog]) {
       assert.doesNotMatch(page, /authMiddleware|RedirectToSignIn/);
       assert.doesNotMatch(page, /@[a-z0-9.-]+\.[a-z]{2,}/i);
     }

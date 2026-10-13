@@ -1,6 +1,11 @@
 /**
  * Outbound Make notification. Sends an id and statuses only.
- * Never includes contact details or OAuth tokens. The webhook URL stays in
+ * Never includes contact details, OAuth tokens, or the interface language.
+ * UI language is a browser preference and is not a content language.
+ * A future optional `ui_locale` field can be added without removing current
+ * fields, but only after the Make scenario is updated to ignore unknown keys
+ * safely. Do not add it here yet.
+ * The webhook URL stays in
  * the server environment and is not returned to the browser.
  */
 

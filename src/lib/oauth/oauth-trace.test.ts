@@ -243,10 +243,10 @@ describe("oauth diagnostic trace", () => {
     assert.match(source, /oauthTraceForAdmin/);
     assert.doesNotMatch(source, /localStorage/);
     const page = readFileSync(new URL("../../routes/admin/index.tsx", import.meta.url), "utf8");
-    assert.match(page, /רענון יומן האבחון/);
+    assert.match(page, /admin\.traceRefresh/);
+    assert.match(page, /admin\.traceMemory/);
     assert.match(page, /getOAuthTrace\(\)/);
     assert.match(page, /createTraceRefreshController/);
-    assert.match(page, /TRACE_MEMORY_WARNING/);
     assert.equal(TRACE_MEMORY_WARNING, "היומן נשמר בזיכרון השרת בלבד. אירועים עשויים להיעלם לאחר הפעלה מחדש או להופיע באופן חלקי כאשר הבקשות מטופלות בשרתים שונים. היעדר אירוע אינו מוכיח שהפעולה לא בוצעה.");
     assert.doesNotMatch(page, /setInterval/);
   });

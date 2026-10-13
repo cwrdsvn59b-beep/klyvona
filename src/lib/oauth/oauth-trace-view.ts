@@ -1,7 +1,9 @@
-export const TRACE_MEMORY_WARNING =
-  "היומן נשמר בזיכרון השרת בלבד. אירועים עשויים להיעלם לאחר הפעלה מחדש או להופיע באופן חלקי כאשר הבקשות מטופלות בשרתים שונים. היעדר אירוע אינו מוכיח שהפעולה לא בוצעה.";
+import type { Locale } from "@/lib/i18n/locale";
+import { translate } from "@/lib/i18n/translate";
 
-export const TRACE_REFRESH_ERROR = "לא הצלחנו לרענן את יומן האבחון. הרשימה הקודמת נשארה.";
+export const TRACE_MEMORY_WARNING = translate("he", "admin.traceMemory");
+
+export const TRACE_REFRESH_ERROR = translate("he", "admin.traceError");
 
 export type TraceRow = {
   at: string;
@@ -19,31 +21,28 @@ export type TracePanel = {
   loadError: string | null;
 };
 
-const OPERATION_LABELS: Record<string, string> = {
-  instagram_callback: "סיום כניסת Instagram",
-  permissions_field: "שדה permissions בתשובת Meta",
-  pending_saved: "שמירה זמנית",
-  authorization_confirmed: "אישור עדכון ההרשאה",
-  payload_transferred: "העברה לחיבור השמור",
-  instagram_renew: "חידוש אסימון",
-  permissions_checked: "בדיקת הרשאות",
-};
-
-const RESULT_LABELS: Record<string, string> = {
-  success: "הצליח",
-  error: "נכשל",
-};
-
 export function emptyTracePanel(): TracePanel {
   return { rows: [], loading: false, refreshedAt: null, loadError: null };
 }
 
-export function traceOperationLabel(operation: string): string {
-  return OPERATION_LABELS[operation] ?? operation;
+export function traceOperationLabel(operation: string, locale: Locale = "he"): string {
+  if (
+    operation === "instagram_callback" ||
+    operation === "permissions_field" ||
+    operation === "pending_saved" ||
+    operation === "authorization_confirmed" ||
+    operation === "payload_transferred" ||
+    operation === "instagram_renew" ||
+    operation === "permissions_checked"
+  ) {
+    return translate(locale, `trace.op.${operation}`);
+  }
+  return operation;
 }
 
-export function traceResultLabel(result: string): string {
-  return RESULT_LABELS[result] ?? result;
+export function traceResultLabel(result: string, locale: Locale = "he"): string {
+  if (result === "success" || result === "error") return translate(locale, `trace.result.${result}`);
+  return result;
 }
 
 export function requestTraceRefresh(panel: TracePanel): { panel: TracePanel; started: boolean } {

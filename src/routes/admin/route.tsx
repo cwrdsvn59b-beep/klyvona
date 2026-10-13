@@ -5,6 +5,9 @@ import { RedirectToSignIn } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { getAdminAccess } from "@/lib/admin.functions";
 import { BrandMark } from "@/components/brand-mark";
+import { LanguageSwitcher } from "@/components/language-switcher";
+import { useI18n } from "@/lib/i18n/context";
+import { showNotice } from "@/lib/i18n/surface";
 
 export const Route = createFileRoute("/admin")({
   component: AdminLayout,
@@ -12,11 +15,13 @@ export const Route = createFileRoute("/admin")({
 
 function AdminLayout() {
   const { user, isPending } = useCurrentUserState();
+  const { t } = useI18n();
 
   if (isPending) {
     return (
-      <main className="grid min-h-screen place-items-center px-6">
-        <p className="text-sm text-muted">בודקים הרשאה…</p>
+      <main className="grid min-h-screen place-items-center gap-4 px-6">
+        <LanguageSwitcher />
+        <p className="text-sm text-muted">{t("admin.checking")}</p>
       </main>
     );
   }
@@ -31,6 +36,7 @@ function AdminLayout() {
 }
 
 function StaffGate({ userId, children }: { userId: string; children: React.ReactNode }) {
+  const { t, locale } = useI18n();
   const [access, setAccess] = useState<{ isAdmin: boolean; configured: boolean } | null>(null);
   const [error, setError] = useState("");
 
@@ -41,7 +47,7 @@ function StaffGate({ userId, children }: { userId: string; children: React.React
         if (!cancelled) setAccess(result);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "לא הצלחנו לבדוק הרשאה");
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "key:admin.checkFailed");
       });
     return () => {
       cancelled = true;
@@ -51,27 +57,26 @@ function StaffGate({ userId, children }: { userId: string; children: React.React
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
+        <div className="mx-auto flex h-auto min-h-16 max-w-6xl flex-wrap items-center gap-3 px-4 py-2">
           <Link to="/" className="flex items-center gap-2">
             <BrandMark className="h-9 w-9 rounded-lg" />
             <span className="font-semibold tracking-wide">KLYVONA</span>
           </Link>
-          <span className="text-sm text-muted">ניהול</span>
-          <div className="ms-auto">
+          <span className="text-sm text-muted">{t("admin.nav")}</span>
+          <div className="ms-auto flex flex-wrap items-center gap-2">
+            <LanguageSwitcher />
             <UserButton />
           </div>
         </div>
       </header>
       <div className="mx-auto max-w-6xl px-4 py-6">
-        {!access && !error ? <p className="text-sm text-muted">טוענים את אזור הניהול…</p> : null}
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {!access && !error ? <p className="text-sm text-muted">{t("admin.loading")}</p> : null}
+        {error ? <p className="text-sm text-danger">{showNotice(locale, error)}</p> : null}
         {access && !access.isAdmin ? (
           <section className="mx-auto max-w-lg rounded-3xl bg-surface p-6 shadow-card">
-            <h1 className="text-2xl font-semibold tracking-tight">אין גישת ניהול</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("admin.deniedTitle")}</h1>
             <p className="mt-3 text-sm leading-relaxed text-muted">
-              {access.configured
-                ? "החשבון הזה אינו מורשה. הגישה ניתנת רק לחשבון שאושר מראש בשרת, ולא ניתן לפתוח אותה מהמסך."
-                : "הניהול סגור. רשימת המנהלים לא הוגדרה בשרת, ולכן אף חשבון לא מקבל גישה."}
+              {access.configured ? t("admin.deniedConfigured") : t("admin.deniedClosed")}
             </p>
           </section>
         ) : null}

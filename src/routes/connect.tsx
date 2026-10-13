@@ -1,14 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { LegalLinks } from "@/components/legal-links";
 import { Button } from "@/components/ui/button";
+import { formatWhen } from "@/lib/format";
+import type { MessageKey } from "@/lib/i18n/he";
+import { useI18n } from "@/lib/i18n/context";
+import { usePageTitle, localeFromMatches } from "@/lib/i18n/page-title";
+import { translate } from "@/lib/i18n/translate";
+import { translateKnown } from "@/lib/i18n/surface";
 import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "@/lib/oauth/connect-buttons";
 import {
   accountsFromBody,
   callConnect,
   canConnectInThisBrowser,
-  CONNECT_GATE_TEXT,
   connectNoticeClass,
   connectResultAccepted,
   connectedFromBody,
@@ -18,33 +24,37 @@ import {
   instagramConnectLists,
   readConnectReceipt,
   renewKept,
-  RENEW_KEPT_MESSAGE,
   type ConnectReceipt,
   type ListedAccount,
   type ListedConnected,
 } from "@/lib/oauth/connect-session";
 
 export const Route = createFileRoute("/connect")({
-  head: () => ({ meta: [{ title: "חיבור Instagram · KLYVONA Connect" }] }),
+  head: ({ matches }) => ({ meta: [{ title: translate(localeFromMatches(matches), "meta.connectTitle") }] }),
   component: ConnectPage,
 });
 
 type Account = ListedAccount;
 type Connected = ListedConnected;
+type Tone = "error" | "ok" | "info";
+type Notice = { key: MessageKey; tone: Tone } | { kind: "verify"; body: Record<string, unknown> };
+type PermissionView =
+  | { kind: "body"; body: Record<string, unknown>; checkedAt: string }
+  | { kind: "fallback"; message: MessageKey; tone: Tone; checkedAt: string };
 
-const ERRORS: Record<string, string> = {
-  denied: "החיבור בוטל.",
-  state: "בקשת החיבור לא אומתה. התחילו שוב.",
-  csrf: "בקשת החיבור לא אומתה. התחילו שוב.",
-  expired: "תוקף בקשת החיבור פג. התחילו שוב.",
-  used: "בקשת החיבור כבר נוצלה. התחילו שוב.",
-  mismatch: "בקשת החיבור לא אומתה. התחילו שוב.",
-  exchange: "Instagram לא השלימה את החיבור. לא נשמר אסימון.",
+const ERROR_KEYS: Record<string, MessageKey> = {
+  denied: "connect.cancelled",
+  state: "connect.badState",
+  csrf: "connect.badState",
+  expired: "connect.expired",
+  used: "connect.used",
+  mismatch: "connect.badState",
+  exchange: "connect.exchange",
 };
 
-type Notice = { text: string; tone: "error" | "ok" | "info" };
-
 function ConnectPage() {
+  const { locale, t } = useI18n();
+  usePageTitle(t("meta.connectTitle"));
   const [receipt, setReceipt] = useState<ConnectReceipt | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [connected, setConnected] = useState<Connected[]>([]);
@@ -55,20 +65,18 @@ function ConnectPage() {
   const [pending, setPending] = useState<ConnectPlatform | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
   const [permissionBusy, setPermissionBusy] = useState(false);
-  const [permissionView, setPermissionView] = useState<{ message: string; identityLabel: string; grantMessage: string; tone: "error" | "ok" | "info"; checkedAt: string } | null>(null);
+  const [permissionView, setPermissionView] = useState<PermissionView | null>(null);
 
-  function setMessage(text: string, tone: Notice["tone"] = "error") {
-    setNotice(text ? { text, tone } : null);
+  function setMessage(key: MessageKey | "", tone: Tone = "error") {
+    setNotice(key ? { key, tone } : null);
   }
 
   useEffect(() => {
     const stored = readConnectReceipt(sessionStorage.getItem("klyvona-onboarding-receipt"));
     setReceipt(stored);
     const code = new URLSearchParams(window.location.search).get("error");
-    if (code) setMessage(ERRORS[code] ?? "החיבור לא הושלם.");
-    if (new URLSearchParams(window.location.search).get("ready")) {
-      setMessage("בחרו רק חשבון Instagram שמופיע ברשימה.", "info");
-    }
+    if (code) setMessage(ERROR_KEYS[code] ?? "connect.notFinished");
+    if (new URLSearchParams(window.location.search).get("ready")) setMessage("connect.chooseListed", "info");
   }, []);
 
   useEffect(() => {
@@ -98,15 +106,15 @@ function ConnectPage() {
       const result = await post(`/api/oauth/${platform}/start`);
       if (!result) return;
       if (result.networkError) {
-        setMessage("אין חיבור לשרת. נסו שוב.");
+        setMessage("connect.noServer");
         return;
       }
       if (result.status === 503) {
-        setMessage("החיבור עדיין ממתין להגדרה בשרת. לא נוצר חיבור מדומה.");
+        setMessage("connect.pendingSetupFake");
         return;
       }
       if (!connectResultAccepted(result, "start") || typeof result.body.authorizeUrl !== "string") {
-        setMessage("לא ניתן לפתוח את Instagram. בדקו שהפנייה נשמרה בדפדפן הזה.");
+        setMessage("connect.cannotOpen");
         return;
       }
       window.location.assign(result.body.authorizeUrl);
@@ -121,17 +129,17 @@ function ConnectPage() {
       const result = await post("/api/oauth/meta/accounts");
       if (!result) return false;
       if (result.networkError) {
-        setMessage("אין חיבור לשרת. נסו שוב.");
+        setMessage("connect.noServer");
         return false;
       }
       if (!connectResultAccepted(result, "accounts")) {
-        if (!quiet) setMessage(result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לטעון חשבונות.");
+        if (!quiet) setMessage(result.status === 503 ? "connect.pendingSetup" : "connect.cannotLoad");
         return false;
       }
       applyLists(result.body);
       return true;
     } catch {
-      setMessage("אין חיבור לשרת. נסו שוב.");
+      setMessage("connect.noServer");
       return false;
     }
   }
@@ -141,17 +149,16 @@ function ConnectPage() {
     try {
       const result = await post("/api/oauth/instagram/verify");
       if (!result || result.networkError) {
-        setMessage("שגיאה זמנית בבדיקה.", "info");
+        setMessage("connect.tempCheck", "info");
         return;
       }
       if (!connectResultAccepted(result, "verify")) {
-        setMessage(result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לאמת את הזהות.");
+        setMessage(result.status === 503 ? "connect.pendingSetup" : "connect.cannotVerify");
         return;
       }
-      const text = instagramVerifyText(result.body);
-      setMessage(text.message, text.tone);
+      setNotice({ kind: "verify", body: result.body });
     } catch {
-      setMessage("שגיאה זמנית בבדיקה.", "info");
+      setMessage("connect.tempCheck", "info");
     } finally {
       setBusy(false);
     }
@@ -161,25 +168,27 @@ function ConnectPage() {
     setPermissionBusy(true);
     try {
       const result = await post("/api/oauth/instagram/permissions");
+      const checkedAt = new Date().toISOString();
       if (!result || result.networkError) {
-        setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", grantMessage: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.", tone: "info", checkedAt: new Date().toISOString() });
+        setPermissionView({ kind: "fallback", message: "connect.tempCheck", tone: "info", checkedAt });
         return;
       }
       if (!connectResultAccepted(result, "permissions")) {
         setPermissionView({
-          message: result.status === 503 ? "החיבור עדיין ממתין להגדרה בשרת." : "לא ניתן לאמת את הזהות.",
-          identityLabel: "החשבון לא אומת",
-          grantMessage: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.",
+          kind: "fallback",
+          message: result.status === 503 ? "connect.pendingSetup" : "connect.cannotVerify",
           tone: "error",
-          checkedAt: new Date().toISOString(),
+          checkedAt,
         });
         return;
       }
-      const text = instagramPermissionText(result.body);
-      const checkedAt = typeof result.body.checkedAt === "string" ? result.body.checkedAt : new Date().toISOString();
-      setPermissionView({ message: text.message, identityLabel: text.identityLabel, grantMessage: text.grantMessage, tone: text.tone, checkedAt });
+      setPermissionView({
+        kind: "body",
+        body: result.body,
+        checkedAt: typeof result.body.checkedAt === "string" ? result.body.checkedAt : checkedAt,
+      });
     } catch {
-      setPermissionView({ message: "שגיאה זמנית בבדיקה.", identityLabel: "החשבון לא אומת", grantMessage: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.", tone: "info", checkedAt: new Date().toISOString() });
+      setPermissionView({ kind: "fallback", message: "connect.tempCheck", tone: "info", checkedAt: new Date().toISOString() });
     } finally {
       setPermissionBusy(false);
     }
@@ -192,14 +201,14 @@ function ConnectPage() {
     try {
       const result = await post("/api/oauth/meta/select", { pendingId: id });
       if (!result || !connectResultAccepted(result, "select")) {
-        setMessage("החשבון לא נשמר. אפשר לבחור רק חשבון שאושר עבור הפנייה הזו.");
+        setMessage("connect.notSaved");
         return;
       }
-      setMessage("החשבון נשמר. האסימון נשאר בשרת.", "ok");
+      setMessage("connect.savedToken", "ok");
       const refreshed = await load(true);
-      if (!refreshed) setMessage("החשבון נשמר, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.", "info");
+      if (!refreshed) setMessage("connect.savedListStale", "info");
     } catch {
-      setMessage("אין חיבור לשרת. נסו שוב.");
+      setMessage("connect.noServer");
     } finally {
       setBusy(false);
       savingRef.current = false;
@@ -213,84 +222,91 @@ function ConnectPage() {
       const result = await post(path, { platform });
       if (result && renewKept(result.body)) {
         const refreshed = await load(true);
-        setMessage(refreshed ? RENEW_KEPT_MESSAGE : "החיבור החדש נשמר. הרשימה לא התעדכנה. לחצו על הצגת חשבונות.", "info");
+        setMessage(refreshed ? "connect.renewKept" : "connect.renewKeptStale", "info");
         return;
       }
       if (!result || !action || !connectResultAccepted(result, action)) {
-        setMessage("הפעולה לא הושלמה. אם ההרשאה פגה, חברו מחדש.");
+        setMessage("connect.actionFailed");
         return;
       }
-      setMessage("הפעולה נשמרה.", "ok");
+      setMessage("connect.actionSaved", "ok");
       const refreshed = await load(true);
-      if (!refreshed) setMessage("הפעולה נשמרה, אבל הרשימה לא התעדכנה. לחצו על הצגת חשבונות.", "info");
+      if (!refreshed) setMessage("connect.actionSavedStale", "info");
     } catch {
-      setMessage("אין חיבור לשרת. נסו שוב.");
+      setMessage("connect.noServer");
     } finally {
       setBusy(false);
       setConfirmOff(false);
     }
   }
 
+  const shown = !notice ? null : "kind" in notice ? instagramVerifyText(notice.body, locale) : { message: t(notice.key), tone: notice.tone };
+  const permission = !permissionView
+    ? null
+    : permissionView.kind === "body"
+      ? { ...instagramPermissionText(permissionView.body, locale), checkedAt: permissionView.checkedAt }
+      : {
+          message: t(permissionView.message),
+          identityLabel: t("oauth.identity.unconfirmed"),
+          grantMessage: t("oauth.grant.permissions_unknown"),
+          tone: permissionView.tone,
+          checkedAt: permissionView.checkedAt,
+        };
+
   return (
     <main className="mx-auto min-h-screen max-w-xl px-4 py-8">
-      <div className="flex items-center gap-3">
-        <BrandMark className="h-12 w-12 rounded-xl" />
-        <div>
-          <p className="text-lg font-semibold tracking-wide">KLYVONA</p>
-          <p className="text-sm text-muted">חיבור חשבון Instagram מקצועי</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <BrandMark className="h-12 w-12 rounded-xl" />
+          <div>
+            <p className="text-lg font-semibold tracking-wide">KLYVONA</p>
+            <p className="text-sm text-muted">{t("connect.subtitle")}</p>
+          </div>
         </div>
+        <LanguageSwitcher />
       </div>
-      <h1 className="mt-8 text-3xl font-semibold tracking-tight">חשבונות שבשליטתכם</h1>
+      <h1 className="mt-8 text-3xl font-semibold tracking-tight">{t("connect.title")}</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted">
-        {receipt?.businessName ?? "הפנייה"} · לא מבקשים סיסמה. חשבון Instagram פרטי לא מופיע כזכאי לפרסום.
+        {t("connect.intro", { name: receipt?.businessName ?? t("connect.requestFallback") })}
       </p>
-      {notice ? (
-        <p className={`mt-4 text-sm ${connectNoticeClass(notice.tone)}`} role={notice.tone === "error" ? "alert" : "status"}>
-          {notice.text}
+      {shown ? (
+        <p className={`mt-4 text-sm ${connectNoticeClass(shown.tone)}`} role={shown.tone === "error" ? "alert" : "status"}>
+          {shown.message}
         </p>
       ) : null}
       {!receipt?.connectSecret ? (
-        <p className="mt-6 text-sm">{CONNECT_GATE_TEXT}</p>
+        <p className="mt-6 text-sm">{t("connect.gate")}</p>
       ) : (
         <div className="mt-6 grid gap-3">
-          <Button
-            disabled={oauthButtonBusy(pending, "instagram")}
-            aria-busy={oauthButtonBusy(pending, "instagram")}
-            className="w-full min-w-0 whitespace-normal"
-            onClick={() => start("instagram")}
-          >
-            התחברות עם Instagram
+          <Button disabled={oauthButtonBusy(pending, "instagram")} aria-busy={oauthButtonBusy(pending, "instagram")} className="w-full min-w-0 whitespace-normal" onClick={() => start("instagram")}>
+            {t("connect.login")}
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => load()}>
-            הצגת חשבונות שאושרו
+            {t("connect.showAccounts")}
           </Button>
           <Button variant="secondary" disabled={busy || connected.length === 0} onClick={() => verifyInstagram()}>
-            בדיקת חיבור Instagram
+            {t("connect.verify")}
           </Button>
           <Button variant="secondary" disabled={permissionBusy || connected.length === 0} aria-busy={permissionBusy} onClick={() => checkPublishPermission()}>
-            {permissionBusy ? "בודקים הרשאות..." : "בדיקת הרשאות פרסום"}
+            {permissionBusy ? t("connect.checkingPermissions") : t("connect.checkPermissions")}
           </Button>
-          {permissionView ? (
+          {permission ? (
             <article className="rounded-2xl bg-surface p-4 shadow-card" aria-live="polite">
-              <p className={connectNoticeClass(permissionView.tone)}>{permissionView.message}</p>
-              <p className="mt-2 text-sm">חשבון: {permissionView.identityLabel}</p>
-              <p className="text-sm">מהחיבור שנשמר: {permissionView.grantMessage}</p>
-              <p className="text-sm">בדיקה מקוונת עכשיו: לא בוצעה</p>
-              <p className="text-sm">פרסום בפועל: לא נבדק</p>
-              <p className="mt-1 text-sm text-muted">
-                בדיקה אחרונה: {new Date(permissionView.checkedAt).toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })}
-              </p>
-              <p className="mt-2 text-sm text-muted">עבור חשבונות של לקוחות אחרים נדרשת גישת Meta מתקדמת ובדיקת האפליקציה לפני פרסום.</p>
+              <p className={connectNoticeClass(permission.tone)}>{permission.message}</p>
+              <p className="mt-2 text-sm">{t("connect.accountLabel", { value: permission.identityLabel })}</p>
+              <p className="text-sm">{t("connect.savedGrant", { value: permission.grantMessage })}</p>
+              <p className="text-sm">{t("connect.onlineCheck")}</p>
+              <p className="text-sm">{t("connect.livePublish")}</p>
+              <p className="mt-1 text-sm text-muted">{t("connect.lastCheck", { when: formatWhen(permission.checkedAt, locale) })}</p>
+              <p className="mt-2 text-sm text-muted">{t("connect.otherCustomers")}</p>
             </article>
           ) : null}
           {connected.map((item) => {
-            const card = instagramCardText(item);
+            const card = instagramCardText(item, locale);
             return (
               <article key={`${item.platform}:${item.externalAccountId || card.detail}`} className="rounded-2xl bg-surface p-4 shadow-card">
                 <p className="font-semibold">{card.title}</p>
-                <p className={card.tone === "ok" ? "text-sm text-ok" : card.tone === "warn" ? "text-sm text-muted" : "text-sm text-danger"}>
-                  {card.label}
-                </p>
+                <p className={card.tone === "ok" ? "text-sm text-ok" : card.tone === "warn" ? "text-sm text-muted" : "text-sm text-danger"}>{card.label}</p>
                 <p className="mt-1 break-all text-sm text-muted" dir="ltr">
                   {card.detail}
                 </p>
@@ -299,38 +315,34 @@ function ConnectPage() {
           })}
           {accounts.map((account) => (
             <article key={account.id} className="rounded-2xl bg-surface p-4 shadow-card">
-              <p className="font-semibold">{account.name}</p>
+              <p className="font-semibold" dir="ltr">
+                {account.name}
+              </p>
               <p className="text-sm text-muted">{account.platform}</p>
-              <p className="mt-1 text-sm">{account.eligible ? "זכאי לפרסום" : account.reason}</p>
+              <p className="mt-1 text-sm">{account.eligible ? t("connect.eligible") : translateKnown(locale, account.reason ?? "")}</p>
               {account.eligible ? (
-          <Button className="mt-3 w-full min-w-0 whitespace-normal" disabled={busy} onClick={() => choose(account.id)}>
-                  {account.authorizationRefresh ? "אישור עדכון ההרשאה" : "שמירת החשבון"}
+                <Button className="mt-3 w-full min-w-0 whitespace-normal" disabled={busy} onClick={() => choose(account.id)}>
+                  {account.authorizationRefresh ? t("connect.confirmAuth") : t("connect.saveAccount")}
                 </Button>
               ) : null}
             </article>
           ))}
           <div className="mt-2 grid gap-2">
             <Button className="w-full min-w-0 whitespace-normal" variant="secondary" disabled={busy} onClick={() => act("/api/oauth/instagram/renew", "instagram")}>
-              חידוש הרשאת Instagram
+              {t("connect.renew")}
             </Button>
             {confirmOff ? (
               <div className="grid gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    void act("/api/oauth/meta/disconnect", "instagram");
-                  }}
-                >
-                  אישור ניתוק Instagram
+                <Button variant="secondary" disabled={busy} onClick={() => void act("/api/oauth/meta/disconnect", "instagram")}>
+                  {t("connect.confirmDisconnect")}
                 </Button>
                 <Button variant="secondary" disabled={busy} onClick={() => setConfirmOff(false)}>
-                  ביטול
+                  {t("common.cancel")}
                 </Button>
               </div>
             ) : (
               <Button variant="secondary" disabled={busy} onClick={() => setConfirmOff(true)}>
-                ניתוק Instagram
+                {t("connect.disconnect")}
               </Button>
             )}
           </div>

@@ -39,15 +39,19 @@ describe("connect page layout", () => {
   it("keeps a single mobile column and the document RTL", () => {
     const page = readFileSync(new URL("../../routes/connect.tsx", import.meta.url), "utf8");
     const root = readFileSync(new URL("../../routes/__root.tsx", import.meta.url), "utf8");
+    const catalog = readFileSync(new URL("../i18n/he.ts", import.meta.url), "utf8");
     assert.match(page, /max-w-xl px-4/);
-    assert.match(page, /התחברות עם Instagram/);
-    assert.match(page, /אישור ניתוק Instagram/);
-    assert.match(page, /ביטול/);
+    assert.match(page, /connect\.login/);
+    assert.match(page, /connect\.confirmDisconnect/);
+    assert.match(page, /common\.cancel/);
+    assert.match(catalog, /התחברות עם Instagram/);
+    assert.match(catalog, /אישור ניתוק Instagram/);
+    assert.match(catalog, /"common.cancel": "ביטול"/);
     assert.match(page, /await load\(true\)/);
     assert.doesNotMatch(page, /התחברות עם Facebook/);
     assert.doesNotMatch(page, /ניתוק Facebook/);
     assert.match(page, /grid gap-3/);
-    assert.match(root, /dir="rtl"/);
+    assert.match(root, /dir=\{dir\}/);
     assert.doesNotMatch(page, /key=\{account\.name\}/);
   });
 });

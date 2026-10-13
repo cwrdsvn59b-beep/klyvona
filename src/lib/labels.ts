@@ -1,3 +1,6 @@
+import type { Locale } from "@/lib/i18n/locale";
+import { catalogLabel } from "@/lib/i18n/translate";
+
 export const INDUSTRIES = [
   { id: "food", label: "מסעדה ואוכל" },
   { id: "beauty", label: "מספרה ויופי" },
@@ -86,24 +89,24 @@ const STATUS_LABELS: Record<string, string> = {
   updated: "עודכן",
 };
 
-export function statusLabel(code: string): string {
-  return STATUS_LABELS[code] ?? code;
+export function statusLabel(code: string, locale: Locale = "he"): string {
+  return catalogLabel("status", code, locale, STATUS_LABELS[code] ?? code);
 }
 
-export function industryLabel(code: string): string {
-  return INDUSTRIES.find((item) => item.id === code)?.label ?? code;
+export function industryLabel(code: string, locale: Locale = "he"): string {
+  return catalogLabel("industry", code, locale, INDUSTRIES.find((item) => item.id === code)?.label ?? code);
 }
 
-export function voiceLabel(code: string): string {
-  return VOICES.find((item) => item.id === code)?.label ?? code;
+export function voiceLabel(code: string, locale: Locale = "he"): string {
+  return catalogLabel("voice", code, locale, VOICES.find((item) => item.id === code)?.label ?? code);
 }
 
-export function visualLabel(code: string): string {
-  return VISUALS.find((item) => item.id === code)?.label ?? code;
+export function visualLabel(code: string, locale: Locale = "he"): string {
+  return catalogLabel("visual", code, locale, VISUALS.find((item) => item.id === code)?.label ?? code);
 }
 
-export function planLabel(code: string): string {
-  return PLANS.find((item) => item.code === code)?.name ?? code;
+export function planLabel(code: string, locale: Locale = "he"): string {
+  return catalogLabel("plan", `${code}.name`, locale, PLANS.find((item) => item.code === code)?.name ?? code);
 }
 
 export function toneFor(code: string): "primary" | "warn" | "danger" | "ok" | "muted" {

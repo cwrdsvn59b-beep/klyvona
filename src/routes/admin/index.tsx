@@ -5,9 +5,12 @@ import { Button } from "@/components/ui/button";
 import { getDashboard, getOAuthTrace, type DashboardData } from "@/lib/admin.functions";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatWhen } from "@/lib/format";
+import { useI18n } from "@/lib/i18n/context";
+import { localeFromMatches, usePageTitle } from "@/lib/i18n/page-title";
+import { showNotice, translateKnown } from "@/lib/i18n/surface";
+import { translate } from "@/lib/i18n/translate";
 import { industryLabel, planLabel } from "@/lib/labels";
 import {
-  TRACE_MEMORY_WARNING,
   createTraceRefreshController,
   emptyTracePanel,
   traceOperationLabel,
@@ -17,12 +20,14 @@ import {
 import { StatusPill } from "@/components/status-pill";
 
 export const Route = createFileRoute("/admin/")({
-  head: () => ({ meta: [{ title: "ניהול · KLYVONA Connect" }] }),
+  head: ({ matches }) => ({ meta: [{ title: translate(localeFromMatches(matches), "meta.adminTitle") }] }),
   component: AdminHome,
 });
 
 function AdminHome() {
   const { user } = useCurrentUserState();
+  const { locale, t } = useI18n();
+  usePageTitle(t("meta.adminTitle"));
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [data, setData] = useState<DashboardData | null>(null);
@@ -44,7 +49,7 @@ function AdminHome() {
         if (!cancelled) setData(result);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "לא הצלחנו לטעון את הלקוחות");
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "key:admin.loadFailed");
       });
     return () => {
       cancelled = true;
@@ -65,51 +70,51 @@ function AdminHome() {
   return (
     <div className="grid gap-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">לקוחות</h1>
-        <p className="mt-1 text-sm text-muted">הצטרפות, חיבורים, מנוי ופרסום. בלי אסימוני גישה במסך.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("admin.clientsTitle")}</h1>
+        <p className="mt-1 text-sm text-muted">{t("admin.clientsBody")}</p>
       </div>
 
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-      {!data && !error ? <p className="text-sm text-muted">טוענים נתונים…</p> : null}
+      {error ? <p className="text-sm text-danger">{showNotice(locale, error)}</p> : null}
+      {!data && !error ? <p className="text-sm text-muted">{t("admin.loadingData")}</p> : null}
 
       {data ? (
         <>
           <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="לקוחות" value={data.stats.clients} />
-            <Stat label="ממתינים לחיבור" value={data.stats.waiting} />
-            <Stat label="התראות" value={data.stats.issues} />
-            <Stat label="מנויים רשומים" value={data.stats.subscriptions} />
+            <Stat label={t("admin.stat.clients")} value={data.stats.clients} />
+            <Stat label={t("admin.stat.waiting")} value={data.stats.waiting} />
+            <Stat label={t("admin.stat.issues")} value={data.stats.issues} />
+            <Stat label={t("admin.stat.subscriptions")} value={data.stats.subscriptions} />
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold">מצב מערכות</h2>
+            <h2 className="text-lg font-semibold">{t("admin.systems")}</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               {data.integrations.map((item) => (
                 <article key={item.id} className="rounded-2xl bg-surface p-4 shadow-card">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className="font-semibold">{item.label}</h3>
-                      <p className="text-sm text-muted">{item.owner}</p>
+                      <p className="text-sm text-muted">{translateKnown(locale, item.owner)}</p>
                     </div>
                     <StatusPill code={item.connectionStatus} />
                   </div>
                   <p className="mt-3 text-sm leading-relaxed text-muted">
                     {item.id === "make"
                       ? item.credentialsPresent
-                        ? "כתובת Make מוגדרת בשרת. נשלחים רק מזהה וסטטוסים, בלי פרטי קשר ובלי אסימונים."
-                        : "ממתין להגדרה. חסר MAKE_WEBHOOK_URL בשרת."
+                        ? t("admin.makeReady")
+                        : t("admin.makeMissing")
                       : item.credentialsPresent
-                        ? "מפתחות קיימים בשרת, אבל החיבור נשאר כבוי עד אימות נפרד."
-                        : `ממתין להגדרה. חסר בשרת: ${item.missing.join(", ")}`}
+                        ? t("admin.keysPresent")
+                        : t("admin.keysMissing", { missing: item.missing.join(", ") })}
                   </p>
                   {item.scopes.length > 0 ? (
                     <details className="mt-3 text-sm text-muted">
-                      <summary className="cursor-pointer">ארכיטקטורת החיבור</summary>
-                      <p className="mt-2">היקף מתוכנן: {item.scopes.join(", ")}</p>
+                      <summary className="cursor-pointer">{t("admin.architecture")}</summary>
+                      <p className="mt-2">{t("admin.plannedScopes", { scopes: item.scopes.join(", ") })}</p>
                       <p className="mt-1" dir="ltr">
                         {item.callbackPath}
                       </p>
-                      <p className="mt-1">OAuth לא הופעל. אין החלפת אסימון.</p>
+                      <p className="mt-1">{t("admin.oauthOff")}</p>
                     </details>
                   ) : null}
                 </article>
@@ -118,12 +123,9 @@ function AdminHome() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold">שגיאות ותפוגת חיבור</h2>
+            <h2 className="text-lg font-semibold">{t("admin.warningsTitle")}</h2>
             {data.warnings.length === 0 ? (
-              <p className="mt-2 text-sm leading-relaxed text-muted">
-                אין כרגע שגיאות או אסימונים שעומדים לפוג. חיבורים אמיתיים עוד לא נוצרו, ולכן אין מה
-                שיפוג.
-              </p>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{t("admin.warningsEmpty")}</p>
             ) : (
               <ul className="mt-3 grid gap-2">
                 {data.warnings.map((warning) => (
@@ -134,8 +136,10 @@ function AdminHome() {
                       className="block rounded-2xl bg-danger-soft px-4 py-3 text-sm text-danger"
                     >
                       <span className="font-medium">{warning.businessName}</span>
-                      <span className="mx-2 text-danger/70">{warning.reference}</span>
-                      <span>{warning.message}</span>
+                      <span className="mx-2 text-danger/70" dir="ltr">
+                        {warning.reference}
+                      </span>
+                      <span>{translateKnown(locale, warning.message)}</span>
                     </Link>
                   </li>
                 ))}
@@ -145,28 +149,31 @@ function AdminHome() {
 
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">אבחון חיבור Instagram</h2>
+              <h2 className="text-lg font-semibold">{t("admin.traceTitle")}</h2>
               <Button className="min-w-0 max-w-full whitespace-normal" variant="secondary" size="sm" disabled={tracePanel.loading} aria-busy={tracePanel.loading} onClick={() => void traceController.current.refresh()}>
-                {tracePanel.loading ? "מרעננים…" : "רענון יומן האבחון"}
+                {tracePanel.loading ? t("admin.traceRefreshing") : t("admin.traceRefresh")}
               </Button>
             </div>
-            <p className="mt-3 text-sm leading-relaxed text-muted">{TRACE_MEMORY_WARNING}</p>
-            <p className="mt-2 text-sm text-muted">היומן מוגבל ל-40 אירועים ולשעתיים. אין כאן אסימונים, מזהים או רשימת הרשאות.</p>
+            <p className="mt-3 text-sm leading-relaxed text-muted">{t("admin.traceMemory")}</p>
+            <p className="mt-2 text-sm text-muted">{t("admin.traceLimit")}</p>
             {tracePanel.refreshedAt ? (
               <p className="mt-2 text-sm text-muted">
-                עודכן לאחרונה: <span dir="ltr">{tracePanel.refreshedAt}</span>
+                {t("admin.traceUpdated")} <span dir="ltr">{tracePanel.refreshedAt}</span>
               </p>
             ) : null}
-            {tracePanel.loadError ? <p className="mt-2 text-sm text-danger">{tracePanel.loadError}</p> : null}
+            {tracePanel.loadError ? <p className="mt-2 text-sm text-danger">{showNotice(locale, tracePanel.loadError)}</p> : null}
             {tracePanel.rows.length === 0 ? (
-              <p className="mt-2 text-sm text-muted">עדיין אין אירועים בתהליך הזה.</p>
+              <p className="mt-2 text-sm text-muted">{t("admin.traceEmpty")}</p>
             ) : (
               <ul className="mt-3 grid gap-2">
                 {tracePanel.rows.map((entry, index) => (
                   <li key={`${entry.at}-${entry.operation}-${index}`} className="rounded-2xl bg-surface px-4 py-3 text-sm shadow-card">
                     <p dir="ltr" className="text-muted">{entry.at}</p>
-                    <p className="mt-1 font-medium">{traceOperationLabel(entry.operation)} · {traceResultLabel(entry.result)}</p>
-                    <p dir="ltr" className="mt-1 text-muted">{entry.grantStatus} · {entry.grantSource} · permissions {entry.permissionsPresent ? "yes" : "no"}</p>
+                    <p className="mt-1 font-medium">{traceOperationLabel(entry.operation, locale)} · {traceResultLabel(entry.result, locale)}</p>
+                    <p dir="ltr" className="mt-1 text-muted">
+                      {entry.grantStatus} · {entry.grantSource} · {t("admin.permissionsField")}{" "}
+                      {entry.permissionsPresent ? t("common.yes") : t("common.no")}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -179,14 +186,12 @@ function AdminHome() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="חיפוש לפי עסק, איש קשר, אימייל, טלפון או מספר פנייה"
+                placeholder={t("admin.searchPlaceholder")}
                 className="h-12 w-full rounded-xl border border-line bg-surface pe-12 ps-4 text-base outline-none focus-visible:border-primary"
               />
             </label>
             {data.clients.length === 0 ? (
-              <p className="mt-4 text-sm text-muted">
-                {debounced ? "אין תוצאות לחיפוש הזה." : "עדיין אין לקוחות. פנייה שתושלם בהצטרפות תופיע כאן."}
-              </p>
+              <p className="mt-4 text-sm text-muted">{debounced ? t("admin.noResults") : t("admin.noClients")}</p>
             ) : (
               <ul className="mt-4 grid gap-3">
                 {data.clients.map((client) => (
@@ -200,7 +205,7 @@ function AdminHome() {
                         <div className="min-w-0">
                           <h3 className="text-lg font-semibold">{client.businessName}</h3>
                           <p className="text-sm text-muted">
-                            {client.contactName} · {industryLabel(client.industry)}
+                            {client.contactName} · {industryLabel(client.industry, locale)}
                           </p>
                         </div>
                         <span className="text-sm font-medium tracking-wide" dir="ltr">
@@ -211,10 +216,10 @@ function AdminHome() {
                         <StatusPill code={client.subscriptionStatus} />
                         <StatusPill code={client.publishingStatus} />
                         <span className="inline-flex h-7 items-center rounded-full bg-bg px-3 text-sm text-muted">
-                          {planLabel(client.planCode)} · {client.postsUsed}/{client.postsQuota}
+                          {planLabel(client.planCode, locale)} · {client.postsUsed}/{client.postsQuota}
                         </span>
                       </div>
-                      <p className="mt-3 text-sm text-muted">{formatWhen(client.createdAt)}</p>
+                      <p className="mt-3 text-sm text-muted">{formatWhen(client.createdAt, locale)}</p>
                     </Link>
                   </li>
                 ))}

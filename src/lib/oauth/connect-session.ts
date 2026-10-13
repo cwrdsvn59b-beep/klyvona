@@ -1,3 +1,6 @@
+import type { Locale } from "@/lib/i18n/locale";
+import { translate } from "@/lib/i18n/translate";
+
 export type ConnectReceipt = {
   reference: string;
   connectSecret: string;
@@ -22,7 +25,7 @@ export type ListedConnected = {
   status?: "connected" | "missing_username" | "unconfirmed" | "reconnect";
 };
 
-export const CONNECT_GATE_TEXT = "המסך הזה זמין אחרי השלמת ההצטרפות באותו דפדפן.";
+export const CONNECT_GATE_TEXT = translate("he", "connect.gate");
 
 export type ConnectCall = {
   ok: boolean;
@@ -98,32 +101,45 @@ export function accountsFromBody(body: Record<string, unknown>): ListedAccount[]
   });
 }
 
-export function instagramCardText(item: {
-  name?: string;
-  externalAccountId: string;
-  trusted?: boolean;
-  status?: string;
-}): {
+export function instagramCardText(
+  item: {
+    name?: string;
+    externalAccountId: string;
+    trusted?: boolean;
+    status?: string;
+  },
+  locale: Locale = "he",
+): {
   title: string;
   detail: string;
   tone: "ok" | "warn" | "danger";
   label: string;
 } {
   if (item.status === "reconnect") {
-    return { title: "Instagram", detail: item.externalAccountId, tone: "danger", label: "נדרשת הרשאה מחדש" };
+    return { title: "Instagram", detail: item.externalAccountId, tone: "danger", label: translate(locale, "oauth.identity.reconnect") };
   }
   if (item.status === "unconfirmed" || (!item.status && !item.externalAccountId)) {
-    return { title: "Instagram", detail: "הזהות לא אומתה. החשבון לא נותק.", tone: "warn", label: "הזהות לא אומתה" };
+    return {
+      title: "Instagram",
+      detail: translate(locale, "oauth.card.unconfirmedDetail"),
+      tone: "warn",
+      label: translate(locale, "oauth.card.unconfirmed"),
+    };
   }
   if (item.status === "connected" || item.status === "missing_username" || item.externalAccountId) {
     return {
       title: item.name || "Instagram",
       detail: item.name ? `@${item.name}` : item.externalAccountId,
       tone: "warn",
-      label: "הטוקן נשמר",
+      label: translate(locale, "oauth.card.tokenSaved"),
     };
   }
-  return { title: "Instagram", detail: "הזהות לא אומתה. החשבון לא נותק.", tone: "warn", label: "הזהות לא אומתה" };
+  return {
+    title: "Instagram",
+    detail: translate(locale, "oauth.card.unconfirmedDetail"),
+    tone: "warn",
+    label: translate(locale, "oauth.card.unconfirmed"),
+  };
 }
 
 export function connectedFromBody(body: Record<string, unknown>): ListedConnected[] {
@@ -161,7 +177,7 @@ export async function readConnectBody(
   }
 }
 
-export const RENEW_KEPT_MESSAGE = "החיבור החדש נשמר. חידוש ישן לא החליף אותו.";
+export const RENEW_KEPT_MESSAGE = translate("he", "connect.renewKept");
 
 export function renewKept(body: Record<string, unknown>): boolean {
   return body.error === "token_replaced" && body.kept === true;
@@ -199,52 +215,77 @@ export function connectResultAccepted(result: ConnectCall, action: ConnectAction
   return body.ok === true;
 }
 
-const VERIFY_TEXT: Record<string, { message: string; tone: ConnectNoticeTone }> = {
-  identity_confirmed: { message: "חשבון Instagram אומת.", tone: "ok" },
-  identity_unconfirmed: { message: "לא ניתן לאמת את הזהות.", tone: "error" },
-  identity_mismatch: { message: "מזהה Instagram אינו תואם למזהה שנשמר.", tone: "error" },
-  reconnect: { message: "נדרשת הרשאה מחדש.", tone: "error" },
-  temporary_error: { message: "שגיאה זמנית בבדיקה.", tone: "info" },
-};
-
 /** The check result is separate from the saved-token card. Publishing stays unverified. */
-export function instagramVerifyText(body: Record<string, unknown>): { message: string; tone: ConnectNoticeTone } {
-  const found = VERIFY_TEXT[typeof body.check === "string" ? body.check : ""] ?? VERIFY_TEXT.identity_unconfirmed;
+export function instagramVerifyText(
+  body: Record<string, unknown>,
+  locale: Locale = "he",
+): { message: string; tone: ConnectNoticeTone } {
+  const check = typeof body.check === "string" ? body.check : "";
+  const key =
+    check === "identity_confirmed" ||
+    check === "identity_unconfirmed" ||
+    check === "identity_mismatch" ||
+    check === "reconnect" ||
+    check === "temporary_error"
+      ? check
+      : "identity_unconfirmed";
+  const tone: ConnectNoticeTone = key === "identity_confirmed" ? "ok" : key === "temporary_error" ? "info" : "error";
   const username = typeof body.username === "string" ? body.username.trim().replace(/^@/, "") : "";
-  const named = username && body.check === "identity_confirmed" ? `${found.message} @${username}` : found.message;
-  if (body.check === "identity_confirmed") return { message: `${named} הפרסום עדיין לא אושר.`, tone: "ok" };
-  return { message: named, tone: found.tone };
+  const base = translate(locale, `oauth.verify.${key}`);
+  const named =
+    username && key === "identity_confirmed" ? translate(locale, "oauth.verify.named", { message: base, username }) : base;
+  if (key === "identity_confirmed") return { message: translate(locale, "oauth.verify.stillUnverified", { message: named }), tone: "ok" };
+  return { message: named, tone };
 }
 
-const PERMISSION_TEXT: Record<string, { message: string; tone: ConnectNoticeTone }> = {
-  permission_confirmed: { message: "הרשאת הפרסום אושרה. לא פורסם תוכן.", tone: "ok" },
-  permission_missing: { message: "הרשאת הפרסום לא ניתנה.", tone: "error" },
-  verification_unavailable: { message: "לא ניתן לאשר את הרשאת הפרסום בבדיקה בטוחה.", tone: "info" },
-  app_review_required: { message: "נדרשת גישת Meta מתקדמת לפני פרסום לחשבונות של לקוחות.", tone: "info" },
-  temporary_error: { message: "שגיאה זמנית בבדיקה.", tone: "info" },
-};
-
-const GRANT_TEXT: Record<string, string> = {
-  permissions_confirmed: "בעת החיבור Meta דיווחה על הרשאת פרסום. זו אינה בדיקה מקוונת עדכנית.",
-  permissions_missing: "בעת החיבור תשובת Meta לא כללה הרשאת פרסום.",
-  permissions_unknown: "רשימת ההרשאות ממועד החיבור לא שמורה. לא בוצעה בדיקה מקוונת חדשה.",
-};
-
-export function instagramPermissionText(body: Record<string, unknown>): {
+export function instagramPermissionText(
+  body: Record<string, unknown>,
+  locale: Locale = "he",
+): {
   message: string;
   identityLabel: string;
   grantMessage: string;
   tone: ConnectNoticeTone;
 } {
-  const grantMessage = GRANT_TEXT[typeof body.grantAtConnection === "string" ? body.grantAtConnection : ""] ?? GRANT_TEXT.permissions_unknown;
-  const remembered = body.grantSource === "preserved_on_refresh" ? `${grantMessage} הנתון נשמר בחידוש האסימון ולא אושר מחדש מול Meta.` : grantMessage;
-  if (body.identity === "reconnect") return { message: "נדרשת הרשאה מחדש.", identityLabel: "נדרשת הרשאה מחדש", grantMessage: remembered, tone: "error" };
-  if (body.identity === "identity_mismatch") {
-    return { message: "מזהה Instagram אינו תואם למזהה שנשמר.", identityLabel: "המזהה אינו תואם", grantMessage: remembered, tone: "error" };
+  const grantKey =
+    body.grantAtConnection === "permissions_confirmed" ||
+    body.grantAtConnection === "permissions_missing" ||
+    body.grantAtConnection === "permissions_unknown"
+      ? body.grantAtConnection
+      : "permissions_unknown";
+  const grantMessage = translate(locale, `oauth.grant.${grantKey}`);
+  const remembered =
+    body.grantSource === "preserved_on_refresh"
+      ? translate(locale, "oauth.grant.remembered", { grant: grantMessage })
+      : grantMessage;
+  if (body.identity === "reconnect") {
+    return {
+      message: translate(locale, "oauth.verify.reconnect"),
+      identityLabel: translate(locale, "oauth.identity.reconnect"),
+      grantMessage: remembered,
+      tone: "error",
+    };
   }
-  const found = PERMISSION_TEXT[typeof body.permission === "string" ? body.permission : ""] ?? PERMISSION_TEXT.verification_unavailable;
-  const identityLabel = body.identityConfirmed === true ? "החשבון אומת" : "החשבון לא אומת";
-  return { message: found.message, identityLabel, grantMessage: remembered, tone: found.tone };
+  if (body.identity === "identity_mismatch") {
+    return {
+      message: translate(locale, "oauth.verify.identity_mismatch"),
+      identityLabel: translate(locale, "oauth.identity.mismatch"),
+      grantMessage: remembered,
+      tone: "error",
+    };
+  }
+  const permission =
+    body.permission === "permission_confirmed" ||
+    body.permission === "permission_missing" ||
+    body.permission === "verification_unavailable" ||
+    body.permission === "app_review_required" ||
+    body.permission === "temporary_error"
+      ? body.permission
+      : "verification_unavailable";
+  const tone: ConnectNoticeTone = permission === "permission_confirmed" ? "ok" : permission === "permission_missing" ? "error" : "info";
+  const identityLabel =
+    body.identityConfirmed === true ? translate(locale, "oauth.identity.confirmed") : translate(locale, "oauth.identity.unconfirmed");
+  return { message: translate(locale, `oauth.permission.${permission}`), identityLabel, grantMessage: remembered, tone };
 }
 
 export async function callConnect(

@@ -1,4 +1,5 @@
 import { cn } from "@/lib/cn";
+import { useI18n } from "@/lib/i18n/context";
 import { statusLabel, toneFor } from "@/lib/labels";
 
 const tones = {
@@ -10,6 +11,7 @@ const tones = {
 };
 
 export function StatusPill({ code, className }: { code: string; className?: string }) {
+  const { locale } = useI18n();
   return (
     <span
       className={cn(
@@ -18,7 +20,7 @@ export function StatusPill({ code, className }: { code: string; className?: stri
         className,
       )}
     >
-      {statusLabel(code)}
+      {statusLabel(code, locale)}
     </span>
   );
 }
