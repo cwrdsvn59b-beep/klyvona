@@ -151,7 +151,7 @@ export const deleteConfirmedTestClients = createServerFn({ method: "POST" })
     const deleted = await sql.query<{ reference_code: string }>(
       `with matched as (
          select id, reference_code from clients
-         where reference_code = any($1::text[]) and id = any($2::text[])
+         where reference_code = any($1::text[]) and id::text = any($2::text[])
        ), eligible as (
          select id from matched
          where (select count(*) from matched) = $3::int
