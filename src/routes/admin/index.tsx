@@ -234,7 +234,7 @@ function AdminHome() {
             )}
           </section>
 
-          <TestClientCleanup clients={data.clients} />
+          <TestClientCleanup clients={data.clients} onDeleted={() => setRefreshKey((value) => value + 1)} />
 
           <section>
             <label className="relative block">
