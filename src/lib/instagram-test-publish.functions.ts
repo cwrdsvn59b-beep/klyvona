@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { resolveAdminAccess } from "@/lib/admin-grant.server";
 import { getSql, type Sql } from "@/lib/db";
 import { tokenHash } from "@/lib/approval.server";
-import { openSecret } from "@/lib/crypto/tokens.server";
 import { permissionConfirmedForToken } from "@/lib/approval";
 import { INSTAGRAM_GRAPH_URL, configuredAppIds, instagramAccountEligible, resolveInstagramAccount } from "@/lib/oauth/meta-guards";
-import { liveInstagramGraph } from "@/lib/oauth/instagram.server";
 
 const TEST_REFERENCE = "KV-EKBXGL";
 const TEST_USERNAME = "klyvona_business";
@@ -45,6 +42,7 @@ export type TestPublishStatus = {
 };
 
 async function requireAdmin(userId: string) {
+  const { resolveAdminAccess } = await import("@/lib/admin-grant.server");
   const access = await resolveAdminAccess(userId);
   if (!access.isAdmin) throw new Error("Administrator permission required");
 }
@@ -151,6 +149,8 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
     // Identity is rechecked live before reserving the only permitted attempt.
     let token = "";
     try {
+      const { openSecret } = await import("@/lib/crypto/tokens.server");
+      const { liveInstagramGraph } = await import("@/lib/oauth/instagram.server");
       const saved = JSON.parse(await openSecret(row.token_ciphertext)) as Record<string, unknown>;
       if (saved.v !== 2 || saved.igUserId !== row.external_account_id ||
           saved.username !== TEST_USERNAME || typeof saved.userToken !== "string" || !saved.userToken) {
@@ -201,7 +201,7 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
         and sa.token_ciphertext = ${row.token_ciphertext}
         and sa.publish_permission = 'confirmed'
         and sa.publish_permission_token_hash = ${tokenHash(row.token_ciphertext)}
-      on conflict (client_id) do nothing
+      on conflict do nothing
       returning id
     `;
     if (!reserved[0]) return { ok: false as const, code: "already_attempted_or_gates_changed" };
