@@ -246,7 +246,7 @@ async function graphPost(path: string, fields: Record<string, string>): Promise<
     // A 4xx API rejection is explicit; 5xx remains ambiguous.
     throw new InstagramGraphPostError(code, response.status >= 400 && response.status < 500);
   }
-  if (!body || typeof body.id !== "string" || !/^\\d{5,32}$/.test(body.id)) {
+  if (!body || typeof body.id !== "string" || !/^\d{5,32}$/.test(body.id)) {
     throw new InstagramGraphPostError(`meta_post_invalid_id_http_${response.status}`, false);
   }
   return body;
