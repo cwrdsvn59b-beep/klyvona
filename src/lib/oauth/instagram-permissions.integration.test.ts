@@ -2,7 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { sealSecret } from "../crypto/tokens.server.ts";
-import { tokenHash } from "../approval.server.ts";
 import { sha256Hex } from "./meta-guards.ts";
 
 (globalThis as { __pgBootstrapPromise__?: Promise<void> }).__pgBootstrapPromise__ = Promise.resolve();
@@ -277,7 +276,7 @@ describe("instagram publish permission check", () => {
     const restore = useTestEnv();
     const { db, sql } = await createDatabase();
     try {
-      const { rememberCheckedPermission } = await import("../approval.server.ts");
+      const { rememberCheckedPermission, tokenHash } = await import("../approval.server.ts");
       const secret = "valid-connect-secret-123456";
       const reference = "KV-ABC123";
       const payload = {
