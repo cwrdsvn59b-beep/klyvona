@@ -194,19 +194,87 @@ export const diagnoseInstagramTestAttempt = createServerFn({ method: "POST" })
   });
 
 type GraphResult = { id?: unknown; permalink?: unknown };
+
+/** Only safe numeric Meta error fields are persisted; never tokens or API messages. */
+class InstagramGraphPostError extends Error {
+  constructor(
+    readonly safeCode: string,
+    readonly definitive: boolean,
+  ) {
+    super(safeCode);
+    this.name = "InstagramGraphPostError";
+  }
+}
+
+class InstagramContainerError extends Error {
+  constructor(readonly safeCode: string) {
+    super(safeCode);
+    this.name = "InstagramContainerError";
+  }
+}
+
 async function graphPost(path: string, fields: Record<string, string>): Promise<GraphResult> {
-  const response = await fetch(`${INSTAGRAM_GRAPH_URL}/${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(fields),
-    signal: AbortSignal.timeout(25000),
-  });
-  const body = await response.json() as Record<string, unknown>;
-  if (!response.ok || typeof body.error === "object" || typeof body.id !== "string") {
-    // No token, URL with credentials or response body in logs or admin UI.
-    throw new Error("instagram_api_rejected");
+  let response: Response;
+  try {
+    response = await fetch(`${INSTAGRAM_GRAPH_URL}/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields),
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch {
+    // Request may have reached Meta before a network timeout.
+    throw new InstagramGraphPostError("meta_post_transport_unknown", false);
+  }
+
+  let body: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = await response.json();
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      body = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Even a 2xx with an unreadable response is an ambiguous POST outcome.
+    throw new InstagramGraphPostError(`meta_post_unreadable_http_${response.status}`, false);
+  }
+
+  const error = body?.error && typeof body.error === "object" && !Array.isArray(body.error)
+    ? body.error as Record<string, unknown> : null;
+  if (!response.ok || error) {
+    const safeInt = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? String(v) : "none";
+    const code = `meta_http_${response.status}_code_${safeInt(error?.code)}_sub_${safeInt(error?.error_subcode)}`;
+    // A 4xx API rejection is explicit; 5xx remains ambiguous.
+    throw new InstagramGraphPostError(code, response.status >= 400 && response.status < 500);
+  }
+  if (!body || typeof body.id !== "string" || !/^\\d{5,32}$/.test(body.id)) {
+    throw new InstagramGraphPostError(`meta_post_invalid_id_http_${response.status}`, false);
   }
   return body;
+}
+
+/** Poll only GET /{containerId}?fields=status_code. Never retries a POST. */
+async function waitForContainerFinished(containerId: string, token: string): Promise<void> {
+  const maxChecks = 8;
+  for (let check = 0; check < maxChecks; check += 1) {
+    const state = await safeGraphRead(containerId, token, "status_code");
+    if (state.httpStatus !== 200 || !state.body) {
+      throw new InstagramContainerError(
+        `container_status_unavailable_http_${state.httpStatus}_code_${state.errorCode ?? "none"}`,
+      );
+    }
+    const status = state.body.status_code;
+    if (status === "FINISHED") return;
+    if (status === "ERROR" || status === "EXPIRED" || status === "PUBLISHED") {
+      throw new InstagramContainerError(`container_status_${status.toLowerCase()}`);
+    }
+    if (status !== "IN_PROGRESS") {
+      throw new InstagramContainerError("container_status_unrecognized");
+    }
+    if (check < maxChecks - 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1800));
+    }
+  }
+  throw new InstagramContainerError("container_not_ready_within_wait");
 }
 
 async function recordStage(sql: Sql, clientId: string, status: string, fields?: {
@@ -306,6 +374,7 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
 
     let stage = "reserved";
     let containerId = "";
+    let publishedMediaId = "";
     try {
       stage = "container_requested";
       await recordStage(sql, row.id, stage);
@@ -318,6 +387,10 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
       stage = "container_created";
       await recordStage(sql, row.id, stage, { containerId });
 
+      // The container must be FINISHED before /media_publish. Read-only GET
+      // polling is bounded; if not ready, fail closed without any publish call.
+      await waitForContainerFinished(containerId, token);
+
       stage = "publish_requested";
       await recordStage(sql, row.id, stage);
       const published = await graphPost(`${row.external_account_id}/media_publish`, {
@@ -325,6 +398,8 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
         access_token: token,
       });
       const mediaId = String(published.id);
+      publishedMediaId = mediaId;
+      stage = "publish_confirmed";
       // The publish response confirms an ID; permalink lookup is optional and
       // must never cause a second publish call.
       await recordStage(sql, row.id, "published", { containerId, mediaId });
@@ -343,15 +418,42 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
         }
       } catch { /* Publication already succeeded; do not retry. */ }
       return { ok: true as const, code: "published", mediaId, permalink };
-    } catch {
-      // A network timeout or DB failure may occur after Meta accepted a call.
-      // Fail closed and never retry; admin must inspect Instagram manually.
+    } catch (error) {
+      // Never unlock the reservation. Distinguish explicit Meta rejection,
+      // container processing, ambiguous transport, and DB persistence failures.
+      const safeCode = error instanceof InstagramGraphPostError
+        ? error.safeCode
+        : error instanceof InstagramContainerError
+          ? error.safeCode
+          : stage === "publish_confirmed"
+            ? "database_persist_failed_after_meta_success"
+            : stage === "publish_requested"
+              ? "publish_result_unknown"
+              : stage === "container_requested"
+                ? "container_result_unknown"
+                : "internal_error_before_publish";
+      const definitelyNoPublish = stage === "container_created" &&
+        error instanceof InstagramContainerError ||
+        stage === "container_requested" &&
+        error instanceof InstagramGraphPostError && error.definitive;
       try {
-        await recordStage(sql, row.id, "uncertain", {
+        await recordStage(sql, row.id, definitelyNoPublish ? "failed_before_request" : "uncertain", {
           containerId: containerId || undefined,
-          errorCode: stage === "publish_requested" ? "publish_result_unknown" : "container_result_unknown",
+          mediaId: publishedMediaId || undefined,
+          errorCode: safeCode,
         });
-      } catch { /* Reservation remains in place even if status update fails. */ }
+      } catch {
+        // Even if DB update fails, unique reservation remains and prevents retry.
+      }
+      if (stage === "publish_confirmed") {
+        return { ok: false as const, code: "published_but_database_confirmation_failed_no_retry" };
+      }
+      if (definitelyNoPublish) {
+        return { ok: false as const, code: "no_publish_request_sent_locked" };
+      }
+      if (error instanceof InstagramGraphPostError && error.definitive) {
+        return { ok: false as const, code: "meta_rejected_no_retry" };
+      }
       return { ok: false as const, code: "uncertain_check_instagram_no_retry" };
     }
   });
