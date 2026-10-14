@@ -236,6 +236,8 @@ export const ru = {
   "oauth.verify.stillUnverified": "{message} Публикация по-прежнему не подтверждена.",
   "oauth.permission.permission_confirmed": "Право публикации подтверждено. Контент не публиковался.",
   "oauth.permission.permission_missing": "Право публикации не выдано.",
+  "oauth.permission.permission_confirmed_at_connection": "Meta подтвердила право публикации при подключении. Сейчас повторная онлайн-проверка недоступна. Контент не публиковался.",
+  "oauth.permission.permission_missing_at_connection": "При подключении Meta не предоставила право публикации. Повторная онлайн-проверка не выполнялась.",
   "oauth.permission.verification_unavailable": "Нельзя подтвердить право публикации безопасной проверкой.",
   "oauth.permission.app_review_required": "Для публикации в аккаунты клиентов нужен расширенный доступ Meta.",
   "oauth.permission.temporary_error": "Временная ошибка проверки.",
