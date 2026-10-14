@@ -98,6 +98,101 @@ export const inspectInstagramTestPublish = createServerFn({ method: "POST" })
     };
   });
 
+/** Read-only investigation of the FIRST attempt; does not unlock or retry it. */
+export type InstagramTestDiagnosis = {
+  attemptStatus: string;
+  containerPresent: boolean;
+  containerStatus: string | null;
+  containerHttpStatus: number | null;
+  containerErrorCode: number | null;
+  containerErrorSubcode: number | null;
+  recentPostMatched: boolean | null;
+  matchedMediaId: string | null;
+  matchedPermalink: string | null;
+  recentMediaHttpStatus: number | null;
+  recentMediaErrorCode: number | null;
+  check: "complete" | "partial" | "not_available";
+};
+
+async function safeGraphRead(path: string, token: string, fields: string): Promise<{
+  httpStatus: number;
+  body: Record<string, unknown> | null;
+  errorCode: number | null;
+  errorSubcode: number | null;
+}> {
+  const url = new URL(`${INSTAGRAM_GRAPH_URL}/${path}`);
+  url.searchParams.set("fields", fields);
+  url.searchParams.set("access_token", token);
+  try {
+    const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(12000) });
+    const data = await response.json() as unknown;
+    const body = data && typeof data === "object" && !Array.isArray(data)
+      ? data as Record<string, unknown> : null;
+    const error = body?.error && typeof body.error === "object" && !Array.isArray(body.error)
+      ? body.error as Record<string, unknown> : null;
+    const numberOrNull = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
+    return {
+      httpStatus: response.status,
+      body: response.ok ? body : null,
+      errorCode: numberOrNull(error?.code),
+      errorSubcode: numberOrNull(error?.error_subcode),
+    };
+  } catch {
+    return { httpStatus: 0, body: null, errorCode: null, errorSubcode: null };
+  }
+}
+
+export const diagnoseInstagramTestAttempt = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }): Promise<InstagramTestDiagnosis> => {
+    await requireAdmin(context.userId);
+    const sql = await getSql();
+    const row = await readTarget(sql);
+    if (!row || !row.external_account_id || !row.token_ciphertext) {
+      throw new Error("Instagram account unavailable");
+    }
+    const attempt = await readAttempt(sql, row.id);
+    if (!attempt) throw new Error("No existing test attempt");
+    const { openSecret } = await import("@/lib/crypto/tokens.server");
+    const stored = JSON.parse(await openSecret(row.token_ciphertext)) as Record<string, unknown>;
+    if (stored.v !== 2 || stored.igUserId !== row.external_account_id ||
+        stored.username !== TEST_USERNAME || typeof stored.userToken !== "string" || !stored.userToken) {
+      throw new Error("Stored Instagram identity mismatch");
+    }
+    // An account refresh changes ciphertext; historical attempt must remain
+    // locked and never be confused with another account's media.
+    const token = stored.userToken;
+    const container = attempt.container_id
+      ? await safeGraphRead(attempt.container_id, token, "status_code")
+      : null;
+    const containerStatus = typeof container?.body?.status_code === "string"
+      ? container.body.status_code.slice(0, 60) : null;
+    const recent = await safeGraphRead(`${row.external_account_id}/media`, token, "id,caption,permalink,timestamp");
+    const items = Array.isArray(recent.body?.data) ? recent.body.data.slice(0, 25) : [];
+    const matched = items.find((item): item is Record<string, unknown> => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      const entry = item as Record<string, unknown>;
+      return typeof entry.caption === "string" && entry.caption.trim() === CAPTION;
+    });
+    const match = matched && typeof matched.id === "string" ? matched : null;
+    const permalink = match && typeof match.permalink === "string" &&
+      /^https:\/\/(?:www\.)?instagram\.com\//.test(match.permalink) ? match.permalink : null;
+    return {
+      attemptStatus: attempt.status,
+      containerPresent: Boolean(attempt.container_id),
+      containerStatus,
+      containerHttpStatus: container?.httpStatus ?? null,
+      containerErrorCode: container?.errorCode ?? null,
+      containerErrorSubcode: container?.errorSubcode ?? null,
+      recentPostMatched: recent.body ? Boolean(match) : null,
+      matchedMediaId: match ? String(match.id) : null,
+      matchedPermalink: permalink,
+      recentMediaHttpStatus: recent.httpStatus,
+      recentMediaErrorCode: recent.errorCode,
+      check: recent.body && (!container || container.body) ? "complete" : recent.body || container?.body ? "partial" : "not_available",
+    };
+  });
+
 type GraphResult = { id?: unknown; permalink?: unknown };
 async function graphPost(path: string, fields: Record<string, string>): Promise<GraphResult> {
   const response = await fetch(`${INSTAGRAM_GRAPH_URL}/${path}`, {
