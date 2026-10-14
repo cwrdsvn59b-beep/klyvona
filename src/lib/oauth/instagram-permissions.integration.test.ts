@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { sealSecret } from "../crypto/tokens.server.ts";
+import { tokenHash } from "../approval.server.ts";
 import { sha256Hex } from "./meta-guards.ts";
 
 (globalThis as { __pgBootstrapPromise__?: Promise<void> }).__pgBootstrapPromise__ = Promise.resolve();
@@ -37,7 +38,8 @@ async function createDatabase() {
       contact_name text not null,
       email text not null,
       phone text not null,
-      connect_secret_hash text
+      connect_secret_hash text,
+      approval_status text default 'approved'
     );
     create table social_accounts (
       id text primary key,
@@ -45,7 +47,10 @@ async function createDatabase() {
       platform text not null,
       status text not null,
       token_ciphertext text,
-      external_account_id text
+      external_account_id text,
+      publish_permission text,
+      publish_permission_token_hash text,
+      publish_permission_at timestamptz
     );
   `);
   return { db, sql: memorySql(db) };
@@ -268,4 +273,72 @@ describe("instagram publish permission check", () => {
       await db.close();
     }
   });
+  it("persists an OAuth-exchange publish grant for the matching connected token only", async () => {
+    const restore = useTestEnv();
+    const { db, sql } = await createDatabase();
+    try {
+      const { rememberCheckedPermission } = await import("../approval.server.ts");
+      const secret = "valid-connect-secret-123456";
+      const reference = "KV-ABC123";
+      const payload = {
+        v: 2,
+        userToken: "long-lived-token",
+        igUserId: PROFESSIONAL_ID,
+        username: "klyvona_business",
+        grantStatus: "permissions_confirmed",
+        grantSource: "oauth_exchange",
+        grantedPermissions: ["instagram_business_basic", "instagram_business_content_publish"],
+      };
+      const cipher = await sealSecret(JSON.stringify(payload));
+      await sql`
+        insert into clients (id, reference_code, contact_name, email, phone, connect_secret_hash)
+        values (${"client-1"}, ${reference}, ${"Client"}, ${"test@example.com"}, ${"050"}, ${sha256Hex(secret)})
+      `;
+      await sql`
+        insert into social_accounts (id, client_id, platform, status, external_account_id, token_ciphertext)
+        values (${"social-1"}, ${"client-1"}, ${"instagram"}, ${"connected"}, ${PROFESSIONAL_ID}, ${cipher})
+      `;
+      const record = (permission: string, identity = "identity_confirmed", connectSecret = secret) =>
+        rememberCheckedPermission({ reference, connectSecret, identity, permission }, sql);
+      const stored = async () => (await sql<{ publish_permission: string | null; publish_permission_token_hash: string | null }>`
+        select publish_permission, publish_permission_token_hash from social_accounts where id = ${"social-1"}
+      `)[0];
+
+      await record("permission_confirmed_at_connection", "identity_mismatch");
+      assert.equal((await stored())?.publish_permission, null);
+      await record("permission_confirmed_at_connection", "identity_confirmed", "invalid-connect-secret-123456");
+      assert.equal((await stored())?.publish_permission, null);
+
+      await record("permission_confirmed_at_connection");
+      assert.equal((await stored())?.publish_permission, "confirmed");
+      assert.equal((await stored())?.publish_permission_token_hash, tokenHash(cipher));
+
+      const replacement = await sealSecret(JSON.stringify({ ...payload, userToken: "replacement", grantedPermissions: ["instagram_business_basic"], grantStatus: "permissions_missing" }));
+      await sql`update social_accounts set token_ciphertext = ${replacement} where id = ${"social-1"}`;
+      assert.notEqual((await stored())?.publish_permission_token_hash, tokenHash(replacement));
+      await record("permission_confirmed_at_connection");
+      assert.notEqual((await stored())?.publish_permission_token_hash, tokenHash(replacement));
+      await record("permission_missing_at_connection");
+      assert.equal((await stored())?.publish_permission, "missing");
+      assert.equal((await stored())?.publish_permission_token_hash, null);
+
+      const wrongAccount = await sealSecret(JSON.stringify({ ...payload, igUserId: "17841400000000099" }));
+      await sql`update social_accounts set token_ciphertext = ${wrongAccount} where id = ${"social-1"}`;
+      await record("permission_confirmed_at_connection");
+      assert.equal((await stored())?.publish_permission, "missing");
+
+      const unknown = await sealSecret(JSON.stringify({ ...payload, grantSource: "not_stored" }));
+      await sql`update social_accounts set token_ciphertext = ${unknown} where id = ${"social-1"}`;
+      await record("permission_confirmed_at_connection");
+      assert.equal((await stored())?.publish_permission, "missing");
+
+      await sql`update social_accounts set token_ciphertext = ${cipher}, status = ${"expired"} where id = ${"social-1"}`;
+      await record("permission_confirmed_at_connection");
+      assert.equal((await stored())?.publish_permission, "missing");
+    } finally {
+      restore();
+      await db.close();
+    }
+  });
+
 });
