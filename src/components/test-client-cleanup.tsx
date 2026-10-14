@@ -181,7 +181,7 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
       ) : null}
       {canDelete ? (
         <div className="mt-4">
-          <Button disabled={busy} variant="destructive" onClick={() => {
+          <Button disabled={busy} className="bg-danger text-white hover:opacity-90" onClick={() => {
             setConfirmation("");
             setConfirmOpen(true);
           }}>{l.delete} ({selected.length})</Button>
@@ -202,7 +202,7 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
               className="mt-2 w-full rounded-xl border border-line bg-surface p-3" dir="ltr" />
             <div className="mt-4 flex flex-wrap gap-3">
               <Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>{l.cancel}</Button>
-              <Button variant="destructive" disabled={busy || confirmation !== `DELETE ${selected.length}`}
+              <Button className="bg-danger text-white hover:opacity-90" disabled={busy || confirmation !== `DELETE ${selected.length}`}
                 onClick={() => void remove()}>{busy ? l.deleting : l.delete}</Button>
             </div>
           </div>
