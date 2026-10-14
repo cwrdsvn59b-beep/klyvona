@@ -152,6 +152,20 @@ describe("approval contract", () => {
     assert.match(route, /rememberCheckedPermission/);
   });
 
+  it("shows read-only readiness gates without creating media or exposing tokens", () => {
+    const route = read("../routes/api/oauth/instagram/permissions.ts");
+    const server = read("./approval.server.ts");
+    const page = read("../routes/connect.tsx");
+    assert.match(route, /automationReadinessForConnect/);
+    assert.match(route, /rememberCheckedPermission/);
+    assert.match(server, /decisionForRow\(row\)/);
+    assert.match(server, /permissionConfirmedForToken/);
+    assert.match(page, /connect\.readinessBlocked/);
+    assert.match(page, /connect\.readinessDisclaimer/);
+    assert.doesNotMatch(route, /media_publish|\/media|activatePublishing/);
+    assert.doesNotMatch(server.slice(server.indexOf("export async function automationReadinessForConnect"), server.indexOf("export async function automationAllowed")), /insert into|update |delete from|userToken/);
+  });
+
   it("has no publishing-job insert and no unguarded scheduled status", () => {
     const root = new URL("../", import.meta.url);
     const files = walk(root.pathname).filter((file) => !file.endsWith("approval.test.ts"));
