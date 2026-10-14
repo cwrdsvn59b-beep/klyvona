@@ -30,6 +30,18 @@ export function isMigrationFile(path) {
 }
 
 /**
+ * Numeric filename prefix, so 999 runs before 1000. Plain localeCompare orders
+ * "1000_..." before "999_...". Names without a prefix stay after numbered files.
+ * Already applied migrations are still skipped by basename and are not rewritten.
+ * @param {string} name
+ * @returns {number}
+ */
+export function migrationPrefix(name) {
+  const match = /^(\d+)/.exec(name);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+/**
  * Migrations in `paths` that are not yet in `applied`, in apply order.
  * Non-`.sql` entries (a `readdir` also yields `migrations/auth/`) are dropped.
  * @param {Iterable<string>} paths
@@ -41,6 +53,6 @@ export function pendingMigrations(paths, applied) {
   return [...paths]
     .filter(isMigrationFile)
     .map((path) => ({ name: migrationName(path), path }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => migrationPrefix(a.name) - migrationPrefix(b.name) || a.name.localeCompare(b.name))
     .filter(({ name }) => !done.has(name));
 }

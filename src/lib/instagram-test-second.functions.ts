@@ -166,13 +166,22 @@ export async function reserveSecondInstagramAttempt(sql: Sql, input: {
   return reserved[0] ?? null;
 }
 
+export class SecondAttemptStateError extends Error {
+  readonly safeCode: string;
+  constructor() {
+    super("second_attempt_state_not_persisted");
+    this.name = "SecondAttemptStateError";
+    this.safeCode = "second_attempt_state_not_persisted";
+  }
+}
+
 export async function recordSecondAttempt(sql: Sql, attemptId: string, clientId: string, status: string, fields?: {
   containerId?: string;
   mediaId?: string;
   permalink?: string;
   errorCode?: string;
 }): Promise<void> {
-  await sql`
+  const updated = await sql<{ id: string }>`
     update instagram_test_publication_attempts
     set status = ${status},
         container_id = coalesce(${fields?.containerId ?? null}, container_id),
@@ -181,7 +190,11 @@ export async function recordSecondAttempt(sql: Sql, attemptId: string, clientId:
         error_code = ${fields?.errorCode ?? null},
         updated_at = now()
     where id = ${attemptId} and client_id = ${clientId}
+    returning id
   `;
+  if (updated.length !== 1 || updated[0]?.id !== attemptId) {
+    throw new SecondAttemptStateError();
+  }
 }
 
 export const publishSecondInstagramTest = createServerFn({ method: "POST" })
@@ -296,7 +309,10 @@ export const publishSecondInstagramTest = createServerFn({ method: "POST" })
       await recordSecondAttempt(sql, reserved.id, row.id, "published", { containerId, mediaId: publishedMediaId });
       return { ok: true as const, code: "published", mediaId: publishedMediaId };
     } catch (error) {
-      const safeCode = error instanceof InstagramGraphPostError
+      const stateNotPersisted = error instanceof SecondAttemptStateError;
+      const safeCode = stateNotPersisted
+        ? error.safeCode
+        : error instanceof InstagramGraphPostError
         ? error.safeCode
         : error instanceof InstagramContainerError
           ? error.safeCode
@@ -307,7 +323,8 @@ export const publishSecondInstagramTest = createServerFn({ method: "POST" })
               : stage === "container_requested"
                 ? "container_result_unknown"
                 : "internal_error_before_publish";
-      const definitelyNoPublish = (stage === "container_created" && error instanceof InstagramContainerError)
+      const definitelyNoPublish = (stateNotPersisted && stage !== "publish_confirmed")
+        || (stage === "container_created" && error instanceof InstagramContainerError)
         || (stage === "container_requested" && error instanceof InstagramGraphPostError && error.definitive);
       try {
         await recordSecondAttempt(sql, reserved.id, row.id, definitelyNoPublish ? "failed_before_request" : "uncertain", {

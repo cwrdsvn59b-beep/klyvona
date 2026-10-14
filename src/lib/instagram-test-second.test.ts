@@ -109,6 +109,15 @@ describe("second Instagram test publication", () => {
     assert.match(source, /sa\.publish_permission_token_hash =/);
     assert.match(source, /first_attempt\.status = 'uncertain'/);
     assert.match(source, /on conflict do nothing/);
+    assert.match(source, /returning id/);
+    assert.match(source, /updated\.length !== 1/);
+    const readyAt = source.indexOf("await waitForContainerFinished(containerId, token)");
+    const publishAt = source.indexOf("const published = await graphPost");
+    const gate = source.slice(readyAt, publishAt);
+    assert.match(gate, /stage = "publish_requested"/);
+    assert.ok(gate.indexOf("stage = \"publish_requested\"") < gate.indexOf("await recordSecondAttempt"));
+    assert.doesNotMatch(gate, /media_publish/);
+    assert.match(source, /stateNotPersisted && stage !== "publish_confirmed"/);
     assert.ok(source.indexOf("await waitForContainerFinished(containerId, token)") < source.indexOf("const published = await graphPost"));
     const publishCalls = source.match(/\/media_publish`/g) ?? [];
     assert.equal(publishCalls.length, 1);
@@ -169,5 +178,26 @@ describe("second Instagram test publication", () => {
     const original = await originalAttempt(sql);
     assert.equal(original?.status, "uncertain");
     assert.equal(original?.error_code, "publish_result_unknown");
+  });
+
+  it("does not continue to publish when the state update matches no row", async () => {
+    const { recordSecondAttempt, reserveSecondInstagramAttempt } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    const before = await originalAttempt(sql);
+    await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-1" });
+    let published = false;
+    await assert.rejects(async () => {
+      await recordSecondAttempt(sql, "missing-attempt", input.clientId, "publish_requested");
+      published = true;
+    }, /second_attempt_state_not_persisted/);
+    assert.equal(published, false);
+    const second = await sql<{ status: string }>`select status from instagram_test_publication_attempts`;
+    assert.equal(second[0]?.status, "reserved");
+    assert.deepEqual(await originalAttempt(sql), before);
+    const saved = await recordSecondAttempt(sql, "second-1", input.clientId, "publish_requested");
+    assert.equal(saved, undefined);
+    const after = await sql<{ status: string }>`select status from instagram_test_publication_attempts where id = 'second-1'`;
+    assert.equal(after[0]?.status, "publish_requested");
+    assert.equal((await originalAttempt(sql))?.status, "uncertain");
   });
 });

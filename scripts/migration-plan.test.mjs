@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { isMigrationFile, migrationName, pendingMigrations } from "./migration-plan.mjs";
+import { isMigrationFile, migrationName, migrationPrefix, pendingMigrations } from "./migration-plan.mjs";
 import { projectRoot } from "./with-app-env.mjs";
 
 const AUTH_MIGRATION = "0001_auth.sql";
@@ -49,6 +49,41 @@ test("pending migrations are returned in name order", () => {
       { name: "0003_c.sql", path: "/migrations/0003_c.sql" },
     ],
   );
+});
+
+test("999 is applied before 1000, and an already applied 999 is not run again", () => {
+  const paths = [
+    "migrations/1000_instagram_test_publication_attempts.sql",
+    "migrations/999_instagram_test_publications.sql",
+    "migrations/0004_client_approval.sql",
+  ];
+  assert.ok(migrationPrefix("999_instagram_test_publications.sql") < migrationPrefix("1000_instagram_test_publication_attempts.sql"));
+  assert.deepEqual(
+    pendingMigrations(paths, []).map((item) => item.name),
+    [
+      "0004_client_approval.sql",
+      "999_instagram_test_publications.sql",
+      "1000_instagram_test_publication_attempts.sql",
+    ],
+  );
+  assert.deepEqual(
+    pendingMigrations(paths, [
+      "0004_client_approval.sql",
+      "999_instagram_test_publications.sql",
+    ]).map((item) => item.name),
+    ["1000_instagram_test_publication_attempts.sql"],
+  );
+});
+
+test("the instagram attempt migration follows 999 on disk and does not reapply it", () => {
+  const names = readdirSync(join(projectRoot(), "migrations"));
+  const order = pendingMigrations(names, []).map((item) => item.name);
+  const first = order.indexOf("999_instagram_test_publications.sql");
+  const second = order.indexOf("1000_instagram_test_publication_attempts.sql");
+  assert.ok(first >= 0 && second > first);
+  const pending = pendingMigrations(names, ["999_instagram_test_publications.sql"]).map((item) => item.name);
+  assert.equal(pending.includes("999_instagram_test_publications.sql"), false);
+  assert.equal(pending.includes("1000_instagram_test_publication_attempts.sql"), true);
 });
 
 test("non-.sql entries are dropped (readdir also yields the auth/ directory)", () => {
