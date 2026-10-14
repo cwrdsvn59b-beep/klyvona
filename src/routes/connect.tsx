@@ -10,6 +10,8 @@ import { useI18n } from "@/lib/i18n/context";
 import { usePageTitle, localeFromMatches } from "@/lib/i18n/page-title";
 import { translate } from "@/lib/i18n/translate";
 import { translateKnown } from "@/lib/i18n/surface";
+import { getOwnApproval } from "@/lib/approval.functions";
+import { isApprovalStatus } from "@/lib/approval";
 import { claimOAuthStart, oauthButtonBusy, type ConnectPlatform } from "@/lib/oauth/connect-buttons";
 import {
   accountsFromBody,
@@ -66,6 +68,7 @@ function ConnectPage() {
   const [confirmOff, setConfirmOff] = useState(false);
   const [permissionBusy, setPermissionBusy] = useState(false);
   const [permissionView, setPermissionView] = useState<PermissionView | null>(null);
+  const [approval, setApproval] = useState("pending_approval");
 
   function setMessage(key: MessageKey | "", tone: Tone = "error") {
     setNotice(key ? { key, tone } : null);
@@ -78,6 +81,19 @@ function ConnectPage() {
     if (code) setMessage(ERROR_KEYS[code] ?? "connect.notFinished");
     if (new URLSearchParams(window.location.search).get("ready")) setMessage("connect.chooseListed", "info");
   }, []);
+
+  useEffect(() => {
+    if (!receipt?.connectSecret) return;
+    let cancelled = false;
+    getOwnApproval({ data: { reference: receipt.reference, connectSecret: receipt.connectSecret } })
+      .then((result) => {
+        if (!cancelled && result.ok && isApprovalStatus(result.approvalStatus)) setApproval(result.approvalStatus);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [receipt]);
 
   useEffect(() => {
     if (!receipt?.connectSecret) return;
@@ -268,6 +284,17 @@ function ConnectPage() {
       <h1 className="mt-8 text-3xl font-semibold tracking-tight">{t("connect.title")}</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted">
         {t("connect.intro", { name: receipt?.businessName ?? t("connect.requestFallback") })}
+      </p>
+      <p className="mt-4 rounded-2xl bg-primary-soft p-4 text-sm leading-relaxed" role="status">
+        {t(
+          approval === "approved"
+            ? "approval.approved"
+            : approval === "rejected"
+              ? "approval.rejected"
+              : approval === "suspended"
+                ? "approval.suspended"
+                : "approval.pending_approval",
+        )}
       </p>
       {shown ? (
         <p className={`mt-4 text-sm ${connectNoticeClass(shown.tone)}`} role={shown.tone === "error" ? "alert" : "status"}>

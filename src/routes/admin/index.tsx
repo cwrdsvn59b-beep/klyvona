@@ -17,6 +17,7 @@ import {
   traceResultLabel,
   type TracePanel,
 } from "@/lib/oauth/oauth-trace-view";
+import { ApprovalActions } from "@/components/approval-actions";
 import { StatusPill } from "@/components/status-pill";
 
 export const Route = createFileRoute("/admin/")({
@@ -33,6 +34,7 @@ function AdminHome() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [tracePanel, setTracePanel] = useState<TracePanel>(emptyTracePanel);
   const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const traceController = useRef(createTraceRefreshController(() => getOAuthTrace(), () => new Date(), setTracePanel));
 
   useEffect(() => {
@@ -54,7 +56,7 @@ function AdminHome() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, debounced]);
+  }, [user?.id, debounced, refreshKey]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -79,6 +81,57 @@ function AdminHome() {
 
       {data ? (
         <>
+          <section>
+            <h2 className="text-lg font-semibold">{t("admin.pendingTitle")}</h2>
+            {data.clients.filter((client) => client.approvalStatus === "pending_approval").length === 0 ? (
+              <p className="mt-2 text-sm text-muted">{t("admin.pendingEmpty")}</p>
+            ) : (
+              <ul className="mt-3 grid gap-3">
+                {data.clients
+                  .filter((client) => client.approvalStatus === "pending_approval")
+                  .map((client) => (
+                    <li key={client.id} className="rounded-2xl bg-surface p-4 shadow-card">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm text-muted" dir="ltr">
+                            {client.reference}
+                          </p>
+                          <p className="text-xs text-muted" dir="ltr">
+                            {client.id}
+                          </p>
+                          <h3 className="text-lg font-semibold">{client.businessName}</h3>
+                          <p className="text-sm text-muted">
+                            {client.contactName} · {industryLabel(client.industry, locale)}
+                          </p>
+                          <p className="text-sm" dir="ltr">
+                            {client.email}
+                          </p>
+                          <p className="text-sm" dir="ltr">
+                            {client.phone}
+                          </p>
+                        </div>
+                        <StatusPill code={client.approvalStatus} />
+                      </div>
+                      <p className="mt-3 text-sm text-muted">
+                        {planLabel(client.planCode, locale)} · {t("admin.registered")} {formatWhen(client.createdAt, locale)}
+                      </p>
+                      <ul className="mt-2 grid gap-1 text-sm">
+                        {client.socials.map((social) => (
+                          <li key={social.platform} className="flex flex-wrap items-center gap-2">
+                            <span className="capitalize">{social.platform}</span>
+                            <StatusPill code={social.status} />
+                            <span className="text-muted">
+                              {t("admin.metaPermission")}: {t(`admin.meta.${social.permission}`)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <ApprovalActions clientId={client.id} status={client.approvalStatus} onChanged={() => setRefreshKey((value) => value + 1)} />
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </section>
           <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label={t("admin.stat.clients")} value={data.stats.clients} />
             <Stat label={t("admin.stat.waiting")} value={data.stats.waiting} />

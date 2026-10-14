@@ -110,9 +110,9 @@ export function planLabel(code: string, locale: Locale = "he"): string {
 }
 
 export function toneFor(code: string): "primary" | "warn" | "danger" | "ok" | "muted" {
-  if (["error", "expired", "failed"].includes(code)) return "danger";
-  if (["awaiting_billing", "past_due", "paused", "pending"].includes(code)) return "warn";
-  if (["active", "sent", "completed", "published", "configured"].includes(code)) return "ok";
+  if (["error", "expired", "failed", "rejected", "suspended"].includes(code)) return "danger";
+  if (["awaiting_billing", "past_due", "paused", "pending", "pending_approval"].includes(code)) return "warn";
+  if (["active", "sent", "completed", "published", "configured", "approved"].includes(code)) return "ok";
   if (["cancelled", "blocked"].includes(code)) return "muted";
   return "primary";
 }

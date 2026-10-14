@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { authMiddleware } from "@/lib/auth/middleware";
 import type { IntegrationHealth } from "@/lib/integrations/health.server";
+import { metaPermissionView, publishingWouldStart, subscriptionAllowsService } from "@/lib/approval";
+import { activatePublishing, publishingActivationAllowed, stopAutomation, tokenHash } from "@/lib/approval.server";
 
 const SUBSCRIPTION_STATUSES = ["trial", "awaiting_billing", "active", "past_due", "cancelled"] as const;
 const PUBLISHING_STATUSES = ["waiting_connection", "scheduled", "publishing", "paused", "error"] as const;
@@ -11,6 +13,7 @@ export type SocialSnap = {
   status: string;
   lastError: string | null;
   tokenExpiresAt: string | null;
+  permission: "unknown" | "confirmed" | "missing" | "stale";
 };
 
 export type ClientListItem = {
@@ -25,6 +28,7 @@ export type ClientListItem = {
   planName: string;
   subscriptionStatus: string;
   publishingStatus: string;
+  approvalStatus: string;
   postsUsed: number;
   postsQuota: number;
   createdAt: string;
@@ -87,6 +91,7 @@ type ClientRow = {
   price_ils_incl_vat: number;
   subscription_status: string;
   publishing_status: string;
+  approval_status: string;
   posts_used: number;
   posts_quota: number;
   created_at: string;
@@ -105,6 +110,7 @@ function toListItem(row: ClientRow, socials: SocialSnap[]): ClientListItem {
     planName: row.plan_name,
     subscriptionStatus: row.subscription_status,
     publishingStatus: row.publishing_status,
+    approvalStatus: row.approval_status,
     postsUsed: Number(row.posts_used),
     postsQuota: Number(row.posts_quota),
     createdAt: row.created_at,
@@ -120,6 +126,7 @@ const CLIENT_SELECT = `
     c.email,
     c.phone,
     c.publishing_status,
+    c.approval_status,
     c.created_at::text as created_at,
     b.business_name,
     b.industry,
@@ -150,9 +157,13 @@ async function socialsFor(ids: string[]): Promise<Map<string, SocialSnap[]>> {
     status: string;
     last_error: string | null;
     token_expires_at: string | null;
+    token_ciphertext: string | null;
+    publish_permission: string | null;
+    publish_permission_token_hash: string | null;
   }>(
     `
-    select client_id, platform, status, last_error, token_expires_at::text as token_expires_at
+    select client_id, platform, status, last_error, token_expires_at::text as token_expires_at,
+           token_ciphertext, publish_permission, publish_permission_token_hash
     from social_accounts
     where client_id = any($1::text[])
     `,
@@ -160,11 +171,18 @@ async function socialsFor(ids: string[]): Promise<Map<string, SocialSnap[]>> {
   );
   for (const row of rows) {
     const list = map.get(row.client_id) ?? [];
+    const currentHash = row.token_ciphertext ? tokenHash(row.token_ciphertext) : null;
     list.push({
       platform: row.platform,
       status: row.status,
       lastError: row.last_error,
       tokenExpiresAt: row.token_expires_at,
+      permission: metaPermissionView({
+        permission: row.publish_permission,
+        storedHash: row.publish_permission_token_hash,
+        currentHash,
+        connected: row.status === "connected" && Boolean(row.token_ciphertext),
+      }),
     });
     map.set(row.client_id, list);
   }
@@ -448,21 +466,51 @@ export const updateClientOps = createServerFn({ method: "POST" })
     const sql = await getSql();
     const found = await sql<{ id: string }>`select id from clients where id = ${data.clientId} limit 1`;
     if (!found[0]) return { ok: false as const, message: "הלקוח לא נמצא" };
-    if (data.subscriptionStatus) {
-      await sql`
-        update client_subscriptions
-        set status = ${data.subscriptionStatus}
-        where client_id = ${data.clientId}
-      `;
-    }
-    if (data.publishingStatus) {
-      await sql`
-        update clients
-        set publishing_status = ${data.publishingStatus}, updated_at = now()
-        where id = ${data.clientId}
-      `;
+    const requested = data.publishingStatus;
+    const wantsStart = publishingWouldStart(requested);
+    if (wantsStart) {
+      const allowed = await publishingActivationAllowed(data.clientId, data.subscriptionStatus);
+      if (!allowed) {
+        await stopAutomation(data.clientId);
+        if (data.subscriptionStatus) {
+          await sql`
+            update client_subscriptions
+            set status = ${data.subscriptionStatus}
+            where client_id = ${data.clientId}
+          `;
+        }
+        await sql`update clients set updated_at = now() where id = ${data.clientId}`;
+        return { ok: false as const, message: "key:admin.publishBlocked" };
+      }
+      if (data.subscriptionStatus) {
+        await sql`
+          update client_subscriptions
+          set status = ${data.subscriptionStatus}
+          where client_id = ${data.clientId}
+        `;
+      }
+      const started = await activatePublishing(data.clientId, requested);
+      if (!started) return { ok: false as const, message: "key:admin.publishBlocked" };
     } else {
-      await sql`update clients set updated_at = now() where id = ${data.clientId}`;
+      if (data.subscriptionStatus && !subscriptionAllowsService(data.subscriptionStatus)) {
+        await stopAutomation(data.clientId);
+      }
+      if (data.subscriptionStatus) {
+        await sql`
+          update client_subscriptions
+          set status = ${data.subscriptionStatus}
+          where client_id = ${data.clientId}
+        `;
+      }
+      if (requested) {
+        await sql`
+          update clients
+          set publishing_status = ${requested}, updated_at = now()
+          where id = ${data.clientId}
+        `;
+      } else {
+        await sql`update clients set updated_at = now() where id = ${data.clientId}`;
+      }
     }
     const detail = [
       data.subscriptionStatus ? `מנוי: ${data.subscriptionStatus}` : null,

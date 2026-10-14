@@ -2,14 +2,15 @@
  * Outbound Make notification. Sends an id and statuses only.
  * Never includes contact details, OAuth tokens, or the interface language.
  * UI language is a browser preference and is not a content language.
- * A future optional `ui_locale` field can be added without removing current
- * fields, but only after the Make scenario is updated to ignore unknown keys
- * safely. Do not add it here yet.
- * The webhook URL stays in
- * the server environment and is not returned to the browser.
+ * Do not add `ui_locale` until the Make scenario is updated.
+ * `onboarding.completed` is registration only. `approval_status` on that
+ * event is `pending_approval` and `automation_allowed` is false.
+ * Automation may start only from a later event whose `automation_allowed`
+ * is true. Approval alone is not that signal.
+ * The webhook URL stays in the server environment and is not returned to the browser.
  */
 
-export type MakeNotice = {
+type MakeOnboarding = {
   event: "onboarding.completed";
   client_id: string;
   reference: string;
@@ -21,8 +22,21 @@ export type MakeNotice = {
   publishing_status: "waiting_connection";
   subscription_status: string;
   video_included: false;
+  approval_status: "pending_approval";
+  automation_allowed: false;
   occurred_at: string;
 };
+
+type MakeApproval = {
+  event: "client.approved" | "client.rejected" | "client.suspended";
+  client_id: string;
+  reference: string;
+  approval_status: "approved" | "rejected" | "suspended";
+  automation_allowed: boolean;
+  occurred_at: string;
+};
+
+export type MakeNotice = MakeOnboarding | MakeApproval;
 
 export type MakeResult = {
   status: "skipped" | "sent" | "failed";

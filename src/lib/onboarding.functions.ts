@@ -11,6 +11,7 @@ export type SubmitResult =
       webhook: "skipped" | "sent" | "failed";
       webhookDetail: string;
       connectSecret: string;
+      approvalStatus: "pending_approval";
       plan: {
         code: string;
         nameHe: string;
@@ -56,9 +57,9 @@ async function insertClient(data: OnboardingData, reference: string): Promise<In
     `
     with new_client as (
       insert into clients (
-        id, reference_code, contact_name, email, phone, onboarding_status, publishing_status
+        id, reference_code, contact_name, email, phone, onboarding_status, publishing_status, approval_status
       )
-      values ($1, $2, $3, $4, $5, 'completed', 'waiting_connection')
+      values ($1, $2, $3, $4, $5, 'completed', 'waiting_connection', 'pending_approval')
       returning id
     ),
     new_profile as (
@@ -200,6 +201,8 @@ export const submitOnboarding = createServerFn({ method: "POST" })
       publishing_status: "waiting_connection",
       subscription_status: inserted.subscription_status,
       video_included: false,
+      approval_status: "pending_approval",
+      automation_allowed: false,
       occurred_at: new Date().toISOString(),
     });
 
@@ -236,6 +239,7 @@ export const submitOnboarding = createServerFn({ method: "POST" })
       webhook: webhook.status,
       webhookDetail: webhook.detail,
       connectSecret: connectSecret.raw,
+      approvalStatus: "pending_approval",
       plan: {
         code: inserted.plan_code,
         nameHe: inserted.name_he,

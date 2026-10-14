@@ -14,6 +14,8 @@ import { catalogLabel } from "@/lib/i18n/translate";
 import { showNotice, translateKnown } from "@/lib/i18n/surface";
 import { INDUSTRIES, PLANS, PLATFORMS, VISUALS, VOICES, planLabel, statusLabel } from "@/lib/labels";
 import { errorsForStep, stepForField, type OnboardingData } from "@/lib/onboarding-schema";
+import { getOwnApproval } from "@/lib/approval.functions";
+import { isApprovalStatus } from "@/lib/approval";
 import { submitOnboarding, type SubmitResult } from "@/lib/onboarding.functions";
 
 const STEP_KEYS = [
@@ -471,11 +473,34 @@ function ChoiceGroup({
 
 function Confirmation({ receipt, onReset }: { receipt: Receipt; onReset: () => void }) {
   const { locale, t } = useI18n();
+  const [approval, setApproval] = useState("pending_approval");
   const webhookKey = receipt.webhook === "sent" || receipt.webhook === "failed" || receipt.webhook === "skipped" ? receipt.webhook : "failed";
   const price = formatIls(receipt.plan.priceIlsInclVat, locale);
+  useEffect(() => {
+    let cancelled = false;
+    getOwnApproval({ data: { reference: receipt.reference, connectSecret: receipt.connectSecret } })
+      .then((result) => {
+        if (!cancelled && result.ok && isApprovalStatus(result.approvalStatus)) setApproval(result.approvalStatus);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [receipt.reference, receipt.connectSecret]);
+  const approvalKey: MessageKey =
+    approval === "approved"
+      ? "approval.approved"
+      : approval === "rejected"
+        ? "approval.rejected"
+        : approval === "suspended"
+          ? "approval.suspended"
+          : "approval.pending_approval";
   return (
     <div>
       <h1 className="text-3xl font-semibold tracking-tight">{t("home.receivedTitle")}</h1>
+      <p className="mt-4 rounded-2xl bg-primary-soft p-4 text-sm leading-relaxed" role="status">
+        {t(approvalKey)}
+      </p>
       <p className="mt-2 text-sm text-muted">{receipt.businessName}</p>
       <p className="mt-5 rounded-2xl bg-surface p-4 shadow-card">
         <span className="block text-sm text-muted">{t("home.reference")}</span>

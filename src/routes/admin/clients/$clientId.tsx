@@ -9,6 +9,7 @@ import { localeFromMatches, usePageTitle } from "@/lib/i18n/page-title";
 import { eventStepLabel, showNotice, translateKnown } from "@/lib/i18n/surface";
 import { translate } from "@/lib/i18n/translate";
 import { industryLabel, planLabel, statusLabel, visualLabel, voiceLabel } from "@/lib/labels";
+import { ApprovalActions } from "@/components/approval-actions";
 import { StatusPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 
@@ -33,6 +34,7 @@ function ClientPage() {
   const [publishingStatus, setPublishingStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -57,7 +59,7 @@ function ClientPage() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, clientId]);
+  }, [user?.id, clientId, refreshKey]);
 
   async function save() {
     if (!profile) return;
@@ -68,15 +70,15 @@ function ClientPage() {
       const result = await updateClientOps({
         data: { clientId: profile.id, subscriptionStatus, publishingStatus },
       });
-      if (!result.ok) {
-        setError(result.message);
-        return;
-      }
       const fresh = await getClientProfile({ data: profile.id });
       if (fresh) {
         setProfile(fresh);
         setSubscriptionStatus(fresh.subscriptionStatus);
         setPublishingStatus(fresh.publishingStatus);
+      }
+      if (!result.ok) {
+        setError(result.message);
+        return;
       }
       setSaved("key:admin.saved");
     } catch (reason) {
@@ -102,6 +104,10 @@ function ClientPage() {
               {profile.reference}
             </p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight">{profile.businessName}</h1>
+            <div className="mt-3">
+              <StatusPill code={profile.approvalStatus} />
+            </div>
+            <ApprovalActions clientId={profile.id} status={profile.approvalStatus} onChanged={() => setRefreshKey((value) => value + 1)} />
             <p className="mt-2 text-sm text-muted">
               {profile.contactName} · {industryLabel(profile.industry, locale)} · {t("admin.opened", { when: formatWhen(profile.createdAt, locale) })}
             </p>
@@ -171,7 +177,12 @@ function ClientPage() {
                   <span className="font-medium capitalize" dir="ltr">
                     {social.platform}
                   </span>
-                  <StatusPill code={social.status} />
+                  <span className="flex flex-wrap items-center justify-end gap-2 text-sm">
+                    <span className="text-muted">
+                      {t("admin.metaPermission")}: {t(`admin.meta.${social.permission}`)}
+                    </span>
+                    <StatusPill code={social.status} />
+                  </span>
                 </li>
               ))}
             </ul>
