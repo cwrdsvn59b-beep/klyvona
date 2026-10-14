@@ -131,7 +131,7 @@ export async function changeClientApproval(input: {
   adminUserId: string;
   reason: string | null;
 }): Promise<
-  | { ok: true; unchanged: boolean; status: ApprovalStatus }
+  | { ok: true; unchanged: boolean; status: ApprovalStatus; webhookStatus: "sent" | "failed" | "skipped" | null }
   | { ok: false; code: "missing" | "invalid" | "conflict" }
 > {
   const next = input.next;
@@ -143,7 +143,7 @@ export async function changeClientApproval(input: {
       return current ? { ok: false, code: "invalid" } : { ok: false, code: "missing" };
     }
     const transition = approvalTransition(current.approval_status, next);
-    if (transition === "noop") return { ok: true, unchanged: true, status: current.approval_status };
+    if (transition === "noop") return { ok: true, unchanged: true, status: current.approval_status, webhookStatus: null };
     if (transition === "invalid") return { ok: false, code: "invalid" };
 
     const updated = await sql<{ id: string }>`
@@ -171,13 +171,13 @@ export async function changeClientApproval(input: {
         ${input.reason}
       )
     `;
-    await notifyApproval(input.clientId, current.reference_code, next);
-    return { ok: true, unchanged: false, status: next };
+    const webhookStatus = await notifyApproval(input.clientId, current.reference_code, next);
+    return { ok: true, unchanged: false, status: next, webhookStatus };
   }
   return { ok: false, code: "conflict" };
 }
 
-async function notifyApproval(clientId: string, reference: string, status: Exclude<ApprovalStatus, "pending_approval">): Promise<void> {
+async function notifyApproval(clientId: string, reference: string, status: Exclude<ApprovalStatus, "pending_approval">): Promise<"sent" | "failed" | "skipped"> {
   const event = status === "approved" ? "client.approved" : status === "rejected" ? "client.rejected" : "client.suspended";
   const allowed = status === "approved" ? await automationAllowed(clientId) : false;
   try {
@@ -202,8 +202,10 @@ async function notifyApproval(clientId: string, reference: string, status: Exclu
         ${result.detail}
       )
     `;
+    return result.status;
   } catch (error) {
     console.error("[approval] webhook failed", error instanceof Error ? error.name : "error");
+    return "failed";
   }
 }
 
