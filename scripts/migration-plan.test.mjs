@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { PGlite } from "@electric-sql/pglite";
 import { isMigrationFile, migrationName, migrationPrefix, pendingMigrations } from "./migration-plan.mjs";
 import { projectRoot } from "./with-app-env.mjs";
 
@@ -91,10 +92,19 @@ test("non-.sql entries are dropped (readdir also yields the auth/ directory)", (
   assert.deepEqual(pendingMigrations(["auth", "README.md"], []), []);
 });
 
-test("the auth schema ships outside the globbed directory", () => {
+test("product migrations are globbed and the auth source stays outside that glob", () => {
   const migrationsDir = join(projectRoot(), "migrations");
-  assert.deepEqual(pendingMigrations(readdirSync(migrationsDir), []), []);
+  const pending = pendingMigrations(readdirSync(migrationsDir), []).map((item) => item.name);
+  assert.deepEqual(pending, [
+    "0001_auth.sql",
+    "0002_klyvona.sql",
+    "0003_meta_oauth.sql",
+    "0004_client_approval.sql",
+    "999_instagram_test_publications.sql",
+    "1000_instagram_test_publication_attempts.sql",
+  ]);
   assert.ok(readdirSync(join(migrationsDir, "auth")).includes("0001_auth.sql"));
+  assert.equal(pending.filter((name) => name === "0001_auth.sql").length, 1);
 });
 
 test("this workspace's auth schema copy is byte-identical to its source", () => {
@@ -107,6 +117,34 @@ test("this workspace's auth schema copy is byte-identical to its source", () => 
     pair.source,
     "migrations/0001_auth.sql has been edited — it must stay a verbatim copy of migrations/auth/0001_auth.sql",
   );
+});
+
+test("ordered migrations apply on a local Postgres and 1000 follows 999", async () => {
+  const root = projectRoot();
+  const pending = pendingMigrations(readdirSync(join(root, "migrations")), []);
+  const db = new PGlite();
+  for (const item of pending) {
+    await db.exec(readFileSync(join(root, "migrations", item.name), "utf8"));
+  }
+  await db.exec(`
+    insert into clients (id, reference_code, contact_name, email, phone)
+    values ('client-1', 'KV-EKBXGL', 'Test', 'test@example.com', '0500000000');
+    insert into instagram_test_publications (
+      id, client_id, admin_user_id, instagram_account_id, token_hash, status, container_id
+    ) values (
+      'first', 'client-1', 'admin-0', '17841499900000001', 'hash', 'uncertain', '17841499900000001'
+    );
+  `);
+  const blocked = await db.query(`
+    insert into instagram_test_publication_attempts (
+      id, client_id, admin_user_id, instagram_account_id, token_hash, status, container_id
+    ) values (
+      'second', 'client-1', 'admin-1', '17841499900000002', 'hash', 'container_created', '17841499900000001'
+    )
+  `).then(() => false).catch((error) => /reused_instagram_test_container/.test(String(error.message)));
+  assert.equal(blocked, true);
+  const original = await db.query("select status from instagram_test_publications where client_id = 'client-1'");
+  assert.equal(original.rows[0].status, "uncertain");
 });
 
 test("the copy check reads both files and catches an edit", () => {

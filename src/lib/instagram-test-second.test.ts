@@ -200,4 +200,39 @@ describe("second Instagram test publication", () => {
     assert.equal(after[0]?.status, "publish_requested");
     assert.equal((await originalAttempt(sql))?.status, "uncertain");
   });
+
+  it("does not reserve when the Meta permission or token is missing", async () => {
+    const { reserveSecondInstagramAttempt } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    await sql`update social_accounts set publish_permission = 'missing' where id = 'social-1'`;
+    assert.equal(await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "no-permission" }), null);
+    await sql`
+      update social_accounts
+      set publish_permission = 'confirmed', token_ciphertext = null
+      where id = 'social-1'
+    `;
+    assert.equal(await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "no-token" }), null);
+    await sql`
+      update social_accounts
+      set token_ciphertext = ${input.tokenCiphertext}, publish_permission_token_hash = 'wrong-hash'
+      where id = 'social-1'
+    `;
+    assert.equal(await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "wrong-hash" }), null);
+    const attempts = await sql<{ id: string }>`select id from instagram_test_publication_attempts`;
+    assert.equal(attempts.length, 0);
+    const original = await originalAttempt(sql);
+    assert.equal(original?.status, "uncertain");
+    assert.equal(original?.container_id, "17841499900000001");
+  });
+
+  it("keeps an unknown Meta result and a failed database write from starting another publish", () => {
+    assert.match(source, /meta_post_transport_unknown/);
+    assert.match(source, /publish_result_unknown/);
+    assert.match(source, /database_persist_failed_after_meta_success/);
+    assert.match(source, /published_but_database_confirmation_failed_no_retry/);
+    assert.match(source, /uncertain_check_instagram_no_retry/);
+    const errorStore = source.slice(source.indexOf("const safeCode"), source.indexOf("const definitelyNoPublish"));
+    assert.equal(errorStore.includes("userToken"), false);
+    assert.equal(errorStore.includes("access_token"), false);
+  });
 });
