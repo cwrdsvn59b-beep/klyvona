@@ -172,6 +172,17 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
       return { ok: false as const, code: "identity_check_failed" };
     }
 
+    // Validate the public JPEG before consuming the single-use reservation.
+    // This is a read-only request without Meta credentials.
+    try {
+      const image = await fetch(TEST_IMAGE_URL, { method: "HEAD", signal: AbortSignal.timeout(10000) });
+      if (!image.ok || !/^image\/jpeg\b/i.test(image.headers.get("content-type") ?? "")) {
+        return { ok: false as const, code: "test_image_unavailable" };
+      }
+    } catch {
+      return { ok: false as const, code: "test_image_unavailable" };
+    }
+
     // Atomic reservation, one per client forever. All four gates and the exact
     // ciphertext are checked AGAIN in the same INSERT statement. Concurrent
     // clicks or HTTP retries cannot issue a second Meta request.
