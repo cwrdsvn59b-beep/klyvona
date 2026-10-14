@@ -4,57 +4,8 @@ import { inspectTestClients, deleteConfirmedTestClients, type CleanupPreview } f
 import type { ClientListItem } from "@/lib/admin.functions";
 import { useI18n } from "@/lib/i18n/context";
 
-const labels = {
-  ru: {
-    title: "Управление клиентами",
-    description: "Выберите клиентов и проверьте связанные записи в рабочей базе перед удалением.",
-    choose: "Выбрать всех клиентов",
-    clear: "Снять выбор",
-    inspect: "Проверить в Neon",
-    checking: "Проверяем…",
-    found: "Найденные клиенты",
-    missing: "Не найдены",
-    related: "Связанные записи",
-    empty: "Нет записей",
-    blocked: "Удаление необратимо. Настройки приложения, Make и Meta не затрагиваются.",
-    delete: "Удалить выбранных клиентов", confirmTitle: "Подтверждение удаления", confirmText: "Удалятся выбранные клиенты и их связанные записи. Введите код подтверждения:", cancel: "Отмена", deleting: "Удаляем…", done: "Удалено клиентов",
-    count: "Выбрано",
-  },
-  he: {
-    title: "ניהול לקוחות",
-    description: "בחרו לקוחות ובדקו רשומות קשורות במסד הנתונים הפעיל לפני מחיקה.",
-    choose: "בחירת כל הלקוחות",
-    clear: "ניקוי הבחירה",
-    inspect: "בדיקה ב-Neon",
-    checking: "בודקים…",
-    found: "לקוחות שנמצאו",
-    missing: "לא נמצאו",
-    related: "רשומות קשורות",
-    empty: "אין רשומות",
-    blocked: "המחיקה בלתי הפיכה. הגדרות האפליקציה, Make ו-Meta נשמרות.",
-    delete: "מחיקת לקוחות נבחרים", confirmTitle: "אישור מחיקה", confirmText: "הלקוחות והרשומות הקשורות יימחקו. הזינו את קוד האישור:", cancel: "ביטול", deleting: "מוחקים…", done: "לקוחות שנמחקו",
-    count: "נבחרו",
-  },
-  en: {
-    title: "Client management",
-    description: "Select clients and inspect related records in the live database before deletion.",
-    choose: "Select all clients",
-    clear: "Clear selection",
-    inspect: "Inspect in Neon",
-    checking: "Checking…",
-    found: "Matched clients",
-    missing: "Not found",
-    related: "Related records",
-    empty: "No records",
-    blocked: "Deletion is irreversible. App, Make and Meta settings are preserved.",
-    delete: "Delete selected clients", confirmTitle: "Confirm deletion", confirmText: "Selected clients and their related records will be deleted. Enter the confirmation code:", cancel: "Cancel", deleting: "Deleting…", done: "Clients deleted",
-    count: "Selected",
-  },
-};
-
 export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListItem[]; onDeleted: () => void }) {
-  const { locale } = useI18n();
-  const l = labels[locale];
+  const { t } = useI18n();
   const [selected, setSelected] = useState<string[]>([]);
   const [preview, setPreview] = useState<CleanupPreview | null>(null);
   const [error, setError] = useState("");
@@ -114,21 +65,21 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
 
   return (
     <section className="rounded-2xl border border-line bg-surface p-4 shadow-card">
-      <h2 className="text-lg font-semibold">{l.title}</h2>
-      <p className="mt-2 text-sm text-muted">{l.description}</p>
+      <h2 className="text-lg font-semibold">{t("admin.cleanup.title")}</h2>
+      <p className="mt-2 text-sm text-muted">{t("admin.cleanup.description")}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button variant="secondary" size="sm" disabled={clients.length === 0 || busy} onClick={() => {
           setSelected(clients.map((client) => client.reference));
           setPreview(null);
           setSuccess(null);
-        }}>{l.choose}</Button>
+        }}>{t("admin.cleanup.choose")}</Button>
         <Button variant="secondary" size="sm" onClick={() => {
           setSelected([]);
           setPreview(null);
           setSuccess(null);
-        }}>{l.clear}</Button>
+        }}>{t("admin.cleanup.clear")}</Button>
       </div>
-      <p className="mt-3 text-sm text-muted">{l.count}: {selected.length}</p>
+      <p className="mt-3 text-sm text-muted">{t("admin.cleanup.count")}: {selected.length}</p>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {clients.map((client) => (
           <label key={client.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-line p-3">
@@ -143,14 +94,14 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
       </div>
       <div className="mt-4">
         <Button disabled={busy || selected.length === 0 || selected.length > 30} onClick={() => void inspect()}>
-          {busy ? l.checking : l.inspect}
+          {busy ? t("admin.cleanup.checking") : t("admin.cleanup.inspect")}
         </Button>
       </div>
-      {success !== null ? <p role="status" className="mt-3 text-sm">{l.done}: {success}</p> : null}
+      {success !== null ? <p role="status" className="mt-3 text-sm">{t("admin.cleanup.done")}: {success}</p> : null}
       {error ? <p role="alert" className="mt-3 text-sm text-danger">{error}</p> : null}
       {preview ? (
         <div className="mt-4 grid gap-3 border-t border-line pt-4">
-          <h3 className="font-semibold">{l.found}: {preview.matches.length}</h3>
+          <h3 className="font-semibold">{t("admin.cleanup.found")}: {preview.matches.length}</h3>
           <ul className="grid gap-1 text-sm">
             {preview.matches.map((client) => (
               <li key={client.id}>
@@ -160,17 +111,17 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
           </ul>
           {preview.missing.length > 0 ? (
             <p role="alert" className="text-sm text-danger">
-              {l.missing}: <span dir="ltr">{preview.missing.join(", ")}</span>
+              {t("admin.cleanup.missing")}: <span dir="ltr">{preview.missing.join(", ")}</span>
             </p>
           ) : null}
-          <h3 className="font-semibold">{l.related}</h3>
+          <h3 className="font-semibold">{t("admin.cleanup.related")}</h3>
           {preview.counts.length ? (
             <ul className="grid gap-1 text-sm">
               {preview.counts.map((item) => (
                 <li key={item.table}><span dir="ltr">{item.table}</span>: {item.count}</li>
               ))}
             </ul>
-          ) : <p className="text-sm text-muted">{l.empty}</p>}
+          ) : <p className="text-sm text-muted">{t("admin.cleanup.empty")}</p>}
         </div>
       ) : null}
       {canDelete ? (
@@ -178,31 +129,31 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
           <Button disabled={busy} className="bg-danger text-white hover:opacity-90" onClick={() => {
             setConfirmation("");
             setConfirmOpen(true);
-          }}>{l.delete} ({selected.length})</Button>
+          }}>{t("admin.cleanup.delete")} ({selected.length})</Button>
         </div>
       ) : null}
       {confirmOpen && canDelete ? (
-        <div role="dialog" aria-modal="true" aria-label={l.confirmTitle}
+        <div role="dialog" aria-modal="true" aria-label={t("admin.cleanup.confirmTitle")}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-surface p-5 shadow-xl">
-            <h3 className="text-lg font-semibold">{l.confirmTitle}</h3>
-            <p className="mt-3 text-sm">{l.confirmText}</p>
+            <h3 className="text-lg font-semibold">{t("admin.cleanup.confirmTitle")}</h3>
+            <p className="mt-3 text-sm">{t("admin.cleanup.confirmText")}</p>
             <ul className="mt-3 max-h-40 overflow-y-auto text-sm" dir="ltr">
               {preview?.matches.map((client) => <li key={client.id}>{client.reference} — {client.businessName}</li>)}
             </ul>
             <p className="mt-3 font-mono text-sm" dir="ltr">DELETE {selected.length}</p>
             <input value={confirmation} onChange={(event) => setConfirmation(event.target.value)}
-              autoComplete="off" aria-label={l.confirmTitle}
+              autoComplete="off" aria-label={t("admin.cleanup.confirmTitle")}
               className="mt-2 w-full rounded-xl border border-line bg-surface p-3" dir="ltr" />
             <div className="mt-4 flex flex-wrap gap-3">
-              <Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>{l.cancel}</Button>
+              <Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>{t("common.cancel")}</Button>
               <Button className="bg-danger text-white hover:opacity-90" disabled={busy || confirmation !== `DELETE ${selected.length}`}
-                onClick={() => void remove()}>{busy ? l.deleting : l.delete}</Button>
+                onClick={() => void remove()}>{busy ? t("admin.cleanup.deleting") : t("admin.cleanup.delete")}</Button>
             </div>
           </div>
         </div>
       ) : null}
-      <p className="mt-4 text-sm font-medium text-danger">{l.blocked}</p>
+      <p className="mt-4 text-sm font-medium text-danger">{t("admin.cleanup.blocked")}</p>
     </section>
   );
 }

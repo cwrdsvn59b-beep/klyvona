@@ -31,18 +31,9 @@ export function ApprovalActions({
       const result = await setClientApproval({ data: { clientId, status: next, reason } });
       setNotice(result.message);
       if (result.ok && !result.unchanged && "webhookStatus" in result && result.webhookStatus !== "sent") {
-        const messages = {
-          he: result.webhookStatus === "skipped"
-            ? "האישור נשמר, אך השליחה ל-Make דולגה. בדקו את הגדרת החיבור."
-            : "האישור נשמר, אך השליחה ל-Make נכשלה. בדקו את החיבור.",
-          ru: result.webhookStatus === "skipped"
-            ? "Одобрение сохранено, но отправка в Make пропущена. Проверьте подключение."
-            : "Одобрение сохранено, но отправка в Make не удалась. Проверьте подключение.",
-          en: result.webhookStatus === "skipped"
-            ? "Approval saved, but delivery to Make was skipped. Check the integration."
-            : "Approval saved, but delivery to Make failed. Check the integration.",
-        };
-        setDeliveryWarning(messages[locale]);
+        setDeliveryWarning(
+          result.webhookStatus === "skipped" ? t("admin.approvalDeliverySkipped") : t("admin.approvalDeliveryFailed"),
+        );
       }
       if (result.ok) {
         setConfirming(null);
