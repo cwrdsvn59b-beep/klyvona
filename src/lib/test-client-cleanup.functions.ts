@@ -150,8 +150,11 @@ export const deleteConfirmedTestClients = createServerFn({ method: "POST" })
     // clients must still exist. No partial delete if a record is missing.
     const deleted = await sql.query<{ reference_code: string }>(
       `with matched as (
-         select id, reference_code from clients
-         where reference_code = any($1::text[]) and id::text = any($2::text[])
+         select c.id, c.reference_code
+         from clients c
+         join unnest($1::text[], $2::text[]) as requested(reference, client_id)
+           on c.reference_code = requested.reference and c.id::text = requested.client_id
+         for update of c
        ), eligible as (
          select id from matched
          where (select count(*) from matched) = $3::int
