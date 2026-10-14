@@ -269,6 +269,11 @@ function ConnectPage() {
           checkedAt: permissionView.checkedAt,
         };
 
+  const rawReadiness = permissionView?.kind === "body" ? permissionView.body.readiness : null;
+  const readiness = rawReadiness && typeof rawReadiness === "object" && !Array.isArray(rawReadiness)
+    ? rawReadiness as Record<string, unknown>
+    : null;
+
   return (
     <main className="mx-auto min-h-screen max-w-xl px-4 py-8">
       <div className="flex items-start justify-between gap-3">
@@ -324,6 +329,19 @@ function ConnectPage() {
               <p className="text-sm">{t("connect.savedGrant", { value: permission.grantMessage })}</p>
               <p className="text-sm">{t("connect.onlineCheck")}</p>
               <p className="text-sm">{t("connect.livePublish")}</p>
+              {readiness && typeof readiness.ready === "boolean" ? (
+                <div className="mt-3 rounded-xl border border-border p-3 text-sm">
+                  <p className="font-semibold">{t(readiness.ready ? "connect.readinessReady" : "connect.readinessBlocked")}</p>
+                  <ul className="mt-2 space-y-1">
+                    {(["approval", "subscription", "instagram", "permission"] as const).map((gate) => (
+                      <li key={gate}>
+                        {t(`connect.readiness.${gate}`)}: {t(readiness[gate] === true ? "connect.readinessYes" : "connect.readinessNo")}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-muted">{t("connect.readinessDisclaimer")}</p>
+                </div>
+              ) : null}
               <p className="mt-1 text-sm text-muted">{t("connect.lastCheck", { when: formatWhen(permission.checkedAt, locale) })}</p>
               <p className="mt-2 text-sm text-muted">{t("connect.otherCustomers")}</p>
             </article>
