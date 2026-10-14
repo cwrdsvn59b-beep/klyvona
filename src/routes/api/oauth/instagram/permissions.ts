@@ -10,12 +10,13 @@ export const Route = createFileRoute("/api/oauth/instagram/permissions")({
         const response = await checkInstagramPublishPermission(request);
         try {
           const sent = JSON.parse(raw) as { reference?: unknown; connectSecret?: unknown };
-          const body = (await response.clone().json()) as { permission?: unknown };
-          if (typeof sent.reference === "string" && typeof sent.connectSecret === "string" && typeof body.permission === "string") {
+          const body = (await response.clone().json()) as { permission?: unknown; identity?: unknown };
+          if (typeof sent.reference === "string" && typeof sent.connectSecret === "string" && typeof body.permission === "string" && typeof body.identity === "string") {
             await rememberCheckedPermission({
               reference: sent.reference,
               connectSecret: sent.connectSecret,
               permission: body.permission,
+              identity: body.identity,
             });
           }
         } catch (error) {
