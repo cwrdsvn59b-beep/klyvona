@@ -46,5 +46,5 @@ export const setClientApproval = createServerFn({ method: "POST" })
     if (!result.ok && result.code === "invalid") return { ok: false as const, message: "key:admin.approvalInvalid" };
     if (!result.ok) return { ok: false as const, message: "key:admin.approvalConflict" };
     if (result.unchanged) return { ok: true as const, unchanged: true, message: "key:admin.approvalUnchanged" };
-    return { ok: true as const, unchanged: false, message: "key:admin.approvalSaved" };
+    return { ok: true as const, unchanged: false, message: "key:admin.approvalSaved", webhookStatus: result.webhookStatus };
   });
