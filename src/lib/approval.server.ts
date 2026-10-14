@@ -240,10 +240,10 @@ async function notifyApproval(clientId: string, reference: string, status: Exclu
   }
 }
 
-export async function clientForConnectSecret(reference: string, connectSecret: string): Promise<{ id: string; approvalStatus: ApprovalStatus } | null> {
+export async function clientForConnectSecret(reference: string, connectSecret: string, sql?: Sql): Promise<{ id: string; approvalStatus: ApprovalStatus } | null> {
   if (!/^KV-[A-Z0-9]{6}$/.test(reference) || connectSecret.length < 20 || connectSecret.length > 200) return null;
-  const sql = await getSql();
-  const rows = await sql<{ id: string; connect_secret_hash: string | null; approval_status: string | null }>`
+  const db = sql ?? (await getSql());
+  const rows = await db<{ id: string; connect_secret_hash: string | null; approval_status: string | null }>`
     select id, connect_secret_hash, approval_status
     from clients
     where reference_code = ${reference}
@@ -276,7 +276,7 @@ export async function rememberCheckedPermission(input: {
       input.permission !== "app_review_required"
   ) return;
 
-  const client = await clientForConnectSecret(input.reference.trim(), input.connectSecret);
+  const client = await clientForConnectSecret(input.reference.trim(), input.connectSecret, sql);
   if (!client) return;
   const db = sql ?? (await getSql());
   const rows = await db<{
