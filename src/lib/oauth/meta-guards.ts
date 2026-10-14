@@ -385,6 +385,18 @@ export function instagramPermissionVerdict(input: {
   return { ...base, permission: "permission_missing" };
 }
 
+/** A saved OAuth grant is historical evidence, never a live permission recheck. */
+export function instagramPermissionWithStoredEvidence(input: {
+  live: InstagramPermissionCheck;
+  identityConfirmed: boolean;
+  stored: ReturnType<typeof readStoredInstagramGrant>;
+}): InstagramPermissionCheck | "permission_confirmed_at_connection" | "permission_missing_at_connection" {
+  if (!input.identityConfirmed || input.live !== "verification_unavailable" || input.stored.source === "not_stored") return input.live;
+  if (input.stored.status === "permissions_confirmed") return "permission_confirmed_at_connection";
+  if (input.stored.status === "permissions_missing") return "permission_missing_at_connection";
+  return input.live;
+}
+
 export function instagramAccountEligible(accountType: string | null): boolean {
   if (!accountType) return false;
   const value = accountType.toUpperCase();
