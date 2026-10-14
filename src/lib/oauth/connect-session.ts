@@ -277,12 +277,14 @@ export function instagramPermissionText(
   const permission =
     body.permission === "permission_confirmed" ||
     body.permission === "permission_missing" ||
+    body.permission === "permission_confirmed_at_connection" ||
+    body.permission === "permission_missing_at_connection" ||
     body.permission === "verification_unavailable" ||
     body.permission === "app_review_required" ||
     body.permission === "temporary_error"
       ? body.permission
       : "verification_unavailable";
-  const tone: ConnectNoticeTone = permission === "permission_confirmed" ? "ok" : permission === "permission_missing" ? "error" : "info";
+  const tone: ConnectNoticeTone = permission === "permission_confirmed" ? "ok" : permission === "permission_missing" || permission === "permission_missing_at_connection" ? "error" : "info";
   const identityLabel =
     body.identityConfirmed === true ? translate(locale, "oauth.identity.confirmed") : translate(locale, "oauth.identity.unconfirmed");
   return { message: translate(locale, `oauth.permission.${permission}`), identityLabel, grantMessage: remembered, tone };
