@@ -4,17 +4,11 @@ import { inspectTestClients, deleteConfirmedTestClients, type CleanupPreview } f
 import type { ClientListItem } from "@/lib/admin.functions";
 import { useI18n } from "@/lib/i18n/context";
 
-const TEST_REFERENCES = [
-  "KV-X4WKZC", "KV-L6XE9Y", "KV-NDYMH6", "KV-J32PC5",
-  "KV-5NL7MT", "KV-625UT7", "KV-H6LNAK", "KV-FKH955",
-  "KV-ASGQ4M", "KV-G6G87U", "KV-P8C9G8", "KV-V9C6NT",
-] as const;
-
 const labels = {
   ru: {
-    title: "Проверка тестовых клиентов",
+    title: "Управление клиентами",
     description: "Выберите клиентов и проверьте связанные записи в рабочей базе перед удалением.",
-    choose: "Выбрать 12 тестовых",
+    choose: "Выбрать всех клиентов",
     clear: "Снять выбор",
     inspect: "Проверить в Neon",
     checking: "Проверяем…",
@@ -27,9 +21,9 @@ const labels = {
     count: "Выбрано",
   },
   he: {
-    title: "בדיקת לקוחות בדיקה",
+    title: "ניהול לקוחות",
     description: "בחרו לקוחות ובדקו רשומות קשורות במסד הנתונים הפעיל לפני מחיקה.",
-    choose: "בחירת 12 לקוחות בדיקה",
+    choose: "בחירת כל הלקוחות",
     clear: "ניקוי הבחירה",
     inspect: "בדיקה ב-Neon",
     checking: "בודקים…",
@@ -42,9 +36,9 @@ const labels = {
     count: "נבחרו",
   },
   en: {
-    title: "Test client inspection",
+    title: "Client management",
     description: "Select clients and inspect related records in the live database before deletion.",
-    choose: "Select 12 test clients",
+    choose: "Select all clients",
     clear: "Clear selection",
     inspect: "Inspect in Neon",
     checking: "Checking…",
@@ -123,8 +117,8 @@ export function TestClientCleanup({ clients, onDeleted }: { clients: ClientListI
       <h2 className="text-lg font-semibold">{l.title}</h2>
       <p className="mt-2 text-sm text-muted">{l.description}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button variant="secondary" size="sm" onClick={() => {
-          setSelected([...TEST_REFERENCES]);
+        <Button variant="secondary" size="sm" disabled={clients.length === 0 || busy} onClick={() => {
+          setSelected(clients.map((client) => client.reference));
           setPreview(null);
           setSuccess(null);
         }}>{l.choose}</Button>
