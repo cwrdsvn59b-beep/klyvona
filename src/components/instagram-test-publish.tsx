@@ -66,6 +66,7 @@ export function InstagramTestPublish({ reference }: { reference: string }) {
         בדיקה חד-פעמית לחשבון @klyvona_business בלבד. הפרסום גלוי לציבור.
         לאחר התחלת ניסיון לא תתאפשר שליחה חוזרת אוטומטית.
       </p>
+      <img src="https://placehold.co/640x640/ffffff/40337a.jpg?text=KLYVONA+TEST" alt="KLYVONA TEST" className="mt-3 size-32 rounded-xl border border-line object-cover" />
       {loading ? <p className="mt-3 text-sm">בודק תנאים...</p> : null}
       {snapshot ? (
         <p className="mt-3 text-sm" role="status">
