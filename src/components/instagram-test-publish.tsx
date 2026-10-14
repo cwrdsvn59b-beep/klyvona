@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   inspectInstagramTestPublish,
+  diagnoseInstagramTestAttempt,
+  type InstagramTestDiagnosis,
   publishOneInstagramTest,
   type TestPublishStatus,
 } from "@/lib/instagram-test-publish.functions";
@@ -17,6 +19,8 @@ export function InstagramTestPublish({ reference }: { reference: string }) {
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
+  const [diagnosis, setDiagnosis] = useState<InstagramTestDiagnosis | null>(null);
+  const [diagnosing, setDiagnosing] = useState(false);
 
   async function refresh() {
     const state = await inspectInstagramTestPublish();
@@ -85,6 +89,35 @@ export function InstagramTestPublish({ reference }: { reference: string }) {
           ) : null}
           {attempt.error_code ? <p dir="ltr">Code: {attempt.error_code}</p> : null}
           <p className="mt-2 text-muted">הניסיון ננעל כדי למנוע פרסום כפול. אין לנסות שוב ללא בדיקה ידנית.</p>
+        </div>
+      ) : null}
+      {attempt ? (
+        <div className="mt-3">
+          <Button variant="secondary" disabled={busy || diagnosing} onClick={async () => {
+            setDiagnosing(true);
+            setError("");
+            try {
+              setDiagnosis(await diagnoseInstagramTestAttempt());
+            } catch {
+              setError("בדיקת Meta נכשלה. לא נשלח פרסום נוסף.");
+            } finally {
+              setDiagnosing(false);
+            }
+          }}>{diagnosing ? "בודק ב-Meta..." : "בדיקת ניסיון קודם ב-Meta (קריאה בלבד)"}</Button>
+          {diagnosis ? (
+            <div className="mt-3 rounded-xl border border-line p-3 text-sm" role="status">
+              <p>תוצאת בדיקה: <span dir="ltr">{diagnosis.check}</span></p>
+              <p>מצב מיכל המדיה: <span dir="ltr">{diagnosis.containerStatus ?? "unknown"}</span></p>
+              <p>HTTP מיכל: <span dir="ltr">{diagnosis.containerHttpStatus ?? "not checked"}</span></p>
+              {diagnosis.containerErrorCode != null ? <p>Meta container error: {diagnosis.containerErrorCode} / {diagnosis.containerErrorSubcode ?? "-"}</p> : null}
+              <p>הפוסט נמצא ברשימת המדיה: {diagnosis.recentPostMatched == null ? "לא ניתן לבדוק" : diagnosis.recentPostMatched ? "כן" : "לא"}</p>
+              <p>HTTP רשימת מדיה: <span dir="ltr">{diagnosis.recentMediaHttpStatus ?? "not checked"}</span></p>
+              {diagnosis.recentMediaErrorCode != null ? <p>Meta media error: {diagnosis.recentMediaErrorCode}</p> : null}
+              {diagnosis.matchedMediaId ? <p dir="ltr">Media ID: {diagnosis.matchedMediaId}</p> : null}
+              {diagnosis.matchedPermalink ? <a className="underline" href={diagnosis.matchedPermalink} target="_blank" rel="noreferrer">פתיחת הפוסט באינסטגרם</a> : null}
+              <p className="mt-2 text-muted">קריאה בלבד: אין יצירת מדיה, אין פרסום, אין איפוס הניסיון.</p>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {result ? <p role="status" className="mt-3 text-sm">{result}</p> : null}
