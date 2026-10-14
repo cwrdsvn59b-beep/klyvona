@@ -234,6 +234,8 @@ export const he = {
   "oauth.verify.stillUnverified": "{message} הפרסום עדיין לא אושר.",
   "oauth.permission.permission_confirmed": "הרשאת הפרסום אושרה. לא פורסם תוכן.",
   "oauth.permission.permission_missing": "הרשאת הפרסום לא ניתנה.",
+  "oauth.permission.permission_confirmed_at_connection": "הרשאת הפרסום אושרה בעת החיבור ל-Meta, אך לא אומתה מחדש כעת. לא פורסם תוכן.",
+  "oauth.permission.permission_missing_at_connection": "בעת החיבור ל-Meta לא ניתנה הרשאת פרסום. לא בוצעה בדיקה מקוונת חדשה.",
   "oauth.permission.verification_unavailable": "לא ניתן לאשר את הרשאת הפרסום בבדיקה בטוחה.",
   "oauth.permission.app_review_required": "נדרשת גישת Meta מתקדמת לפני פרסום לחשבונות של לקוחות.",
   "oauth.permission.temporary_error": "שגיאה זמנית בבדיקה.",
