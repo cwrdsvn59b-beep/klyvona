@@ -236,6 +236,13 @@ describe("instagram publish permission check", () => {
       assert.match(confirmedText.grantMessage, /אינה בדיקה מקוונת/);
       assert.equal(JSON.stringify(confirmed.body).includes("stored-token"), false);
       assert.equal(JSON.stringify(confirmed.body).includes("instagram_business_content_publish"), false);
+      const liveMissing = await run(sql, business, { documented: true, granted: ["instagram_business_basic"] });
+      assert.equal(liveMissing.body.permission, "permission_missing");
+      const wrongIdentity = await run(sql, { ...business, userId: "17841400000000099" }, { documented: false });
+      assert.equal(wrongIdentity.body.permission, "verification_unavailable");
+      assert.equal(wrongIdentity.body.identity, "identity_mismatch");
+      const temporary = await run(sql, new Error("network"), { documented: false });
+      assert.equal(temporary.body.permission, "temporary_error");
       assert.equal((await sql<{ token_ciphertext: string }>`select token_ciphertext from social_accounts where id = ${"social-1"}`)[0]?.token_ciphertext, before);
 
       await replace({ ...base, grantStatus: "permissions_missing", grantSource: "oauth_exchange", grantedPermissions: ["instagram_business_basic"] });
