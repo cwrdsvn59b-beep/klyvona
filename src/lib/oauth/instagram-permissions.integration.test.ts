@@ -228,8 +228,10 @@ describe("instagram publish permission check", () => {
       assert.equal(confirmed.body.grantAtConnection, "permissions_confirmed");
       assert.equal(confirmed.body.grantSource, "oauth_exchange");
       assert.equal(confirmed.body.liveRecheck, "not_performed");
-      assert.equal(confirmed.body.permission, "verification_unavailable");
+      assert.equal(confirmed.body.permission, "permission_confirmed_at_connection");
       assert.equal(confirmed.body.identity, "identity_confirmed");
+      assert.equal(confirmed.body.publishingTested, false);
+      assert.equal(confirmed.body.contentCreated, false);
       const confirmedText = instagramPermissionText(confirmed.body);
       assert.match(confirmedText.grantMessage, /אינה בדיקה מקוונת/);
       assert.equal(JSON.stringify(confirmed.body).includes("stored-token"), false);
@@ -239,17 +241,20 @@ describe("instagram publish permission check", () => {
       await replace({ ...base, grantStatus: "permissions_missing", grantSource: "oauth_exchange", grantedPermissions: ["instagram_business_basic"] });
       const missing = await run(sql, business, { documented: false });
       assert.equal(missing.body.grantAtConnection, "permissions_missing");
+      assert.equal(missing.body.permission, "permission_missing_at_connection");
       assert.notEqual(missing.body.identity, "reconnect");
 
       await replace(base);
       const oldToken = await run(sql, business, { documented: false });
       assert.equal(oldToken.body.grantAtConnection, "permissions_unknown");
       assert.equal(oldToken.body.grantSource, "not_stored");
+      assert.equal(oldToken.body.permission, "verification_unavailable");
       assert.equal(oldToken.body.identity, "identity_confirmed");
 
       await replace({ ...base, grantStatus: "permissions_confirmed", grantedPermissions: ["not a scope"] });
       const broken = await run(sql, business, { documented: false });
       assert.equal(broken.body.grantAtConnection, "permissions_unknown");
+      assert.equal(broken.body.permission, "verification_unavailable");
       assert.notEqual(broken.body.identity, "reconnect");
     } finally {
       restore();
