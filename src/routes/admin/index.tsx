@@ -19,6 +19,7 @@ import {
 } from "@/lib/oauth/oauth-trace-view";
 import { ApprovalActions } from "@/components/approval-actions";
 import { StatusPill } from "@/components/status-pill";
+import { TestClientCleanup } from "@/components/test-client-cleanup";
 
 export const Route = createFileRoute("/admin/")({
   head: ({ matches }) => ({ meta: [{ title: translate(localeFromMatches(matches), "meta.adminTitle") }] }),
@@ -232,6 +233,8 @@ function AdminHome() {
               </ul>
             )}
           </section>
+
+          <TestClientCleanup clients={data.clients} />
 
           <section>
             <label className="relative block">
