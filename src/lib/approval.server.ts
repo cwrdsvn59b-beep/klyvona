@@ -62,6 +62,36 @@ export function decisionForRow(row: ApprovalRow): ReturnType<typeof automationDe
   });
 }
 
+/** Read-only customer-scoped activation diagnostics; never exposes token material. */
+export async function automationReadinessForConnect(input: { reference: string; connectSecret: string }): Promise<{
+  ready: boolean;
+  block: "approval" | "subscription" | "instagram" | "permission" | null;
+  approval: boolean;
+  subscription: boolean;
+  instagram: boolean;
+  permission: boolean;
+} | null> {
+  const client = await clientForConnectSecret(input.reference.trim(), input.connectSecret);
+  if (!client) return null;
+  const row = await readClient(await getSql(), client.id);
+  if (!row) return null;
+  const connected = row.ig_status === "connected" && Boolean(row.external_account_id) && Boolean(row.token_ciphertext);
+  const confirmed = permissionConfirmedForToken({
+    permission: row.publish_permission,
+    storedHash: row.publish_permission_token_hash,
+    currentHash: row.token_ciphertext ? tokenHash(row.token_ciphertext) : null,
+  });
+  const decision = decisionForRow(row);
+  return {
+    ready: decision.ok,
+    block: decision.ok ? null : decision.block,
+    approval: row.approval_status === "approved",
+    subscription: subscriptionAllowsService(row.subscription_status),
+    instagram: connected,
+    permission: confirmed,
+  };
+}
+
 export async function automationAllowed(clientId: string): Promise<boolean> {
   const row = await readClient(await getSql(), clientId);
   return Boolean(row && decisionForRow(row).ok);
