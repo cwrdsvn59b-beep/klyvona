@@ -16,6 +16,7 @@ import { Route as DataDeletionRouteImport } from './routes/data-deletion'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as ApiServerVersionRouteImport } from './routes/api/server-version'
 import { Route as AdminClientsClientIdRouteImport } from './routes/admin/clients/$clientId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiOauthProviderCallbackRouteImport } from './routes/api/oauth/$provider/callback'
@@ -62,6 +63,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminRouteRoute,
+} as any)
+const ApiServerVersionRoute = ApiServerVersionRouteImport.update({
+  id: '/api/server-version',
+  path: '/api/server-version',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AdminClientsClientIdRoute = AdminClientsClientIdRouteImport.update({
   id: '/clients/$clientId',
@@ -128,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
+  '/api/server-version': typeof ApiServerVersionRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -147,6 +154,7 @@ export interface FileRoutesByTo {
   '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
+  '/api/server-version': typeof ApiServerVersionRoute
   '/admin': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -168,6 +176,7 @@ export interface FileRoutesById {
   '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
+  '/api/server-version': typeof ApiServerVersionRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -190,6 +199,7 @@ export interface FileRouteTypes {
     | '/data-deletion'
     | '/login'
     | '/privacy'
+    | '/api/server-version'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
@@ -209,6 +219,7 @@ export interface FileRouteTypes {
     | '/data-deletion'
     | '/login'
     | '/privacy'
+    | '/api/server-version'
     | '/admin'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
@@ -229,6 +240,7 @@ export interface FileRouteTypes {
     | '/data-deletion'
     | '/login'
     | '/privacy'
+    | '/api/server-version'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
@@ -250,6 +262,7 @@ export interface RootRouteChildren {
   DataDeletionRoute: typeof DataDeletionRoute
   LoginRoute: typeof LoginRoute
   PrivacyRoute: typeof PrivacyRoute
+  ApiServerVersionRoute: typeof ApiServerVersionRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiOauthProviderCallbackRoute: typeof ApiOauthProviderCallbackRoute
   ApiOauthProviderStartRoute: typeof ApiOauthProviderStartRoute
@@ -312,6 +325,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/api/server-version': {
+      id: '/api/server-version'
+      path: '/api/server-version'
+      fullPath: '/api/server-version'
+      preLoaderRoute: typeof ApiServerVersionRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/admin/clients/$clientId': {
       id: '/admin/clients/$clientId'
@@ -414,6 +434,7 @@ const rootRouteChildren: RootRouteChildren = {
   DataDeletionRoute: DataDeletionRoute,
   LoginRoute: LoginRoute,
   PrivacyRoute: PrivacyRoute,
+  ApiServerVersionRoute: ApiServerVersionRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiOauthProviderCallbackRoute: ApiOauthProviderCallbackRoute,
   ApiOauthProviderStartRoute: ApiOauthProviderStartRoute,
