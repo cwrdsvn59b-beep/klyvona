@@ -140,6 +140,9 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
   })
   .handler(async ({ context }) => {
     await requireAdmin(context.userId);
+    if (!process.env.DATABASE_URL?.trim() || !process.env.TOKEN_ENCRYPTION_KEY?.trim()) {
+      return { ok: false as const, code: "production_secrets_missing" };
+    }
     const sql = await getSql();
     const row = await readTarget(sql);
     if (!row || !readiness(row).ready || !row.token_ciphertext || !row.external_account_id) {
