@@ -24,6 +24,17 @@ describe("single-attempt Instagram test publication safety invariants", () => {
     assert.match(migration, /instagram_account_id text not null unique/);
     assert.match(migration, /client_id text primary key/);
   });
+  it("reconciles the existing container and recent media using GET only", () => {
+    const start = source.indexOf("export const diagnoseInstagramTestAttempt");
+    const end = source.indexOf("type GraphResult =", start);
+    assert.ok(start >= 0 && end > start);
+    const diagnosis = source.slice(start, end);
+    assert.match(diagnosis, /safeGraphRead\(attempt.container_id, token, "status_code"\)/);
+    assert.match(diagnosis, /safeGraphRead\(\`\$\{row.external_account_id\}\/media\`, token/);
+    assert.doesNotMatch(diagnosis, /graphPost|media_publish|recordStage|update instagram_test_publications/);
+    assert.match(source, /method: "GET"/);
+    assert.match(ui, /diagnoseInstagramTestAttempt/);
+  });
   it("never retries a publish request and records uncertain outcomes", () => {
     assert.match(source, /media_publish/);
     assert.match(source, /publish_result_unknown/);
