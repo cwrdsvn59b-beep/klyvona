@@ -114,7 +114,7 @@ export type InstagramTestDiagnosis = {
   check: "complete" | "partial" | "not_available";
 };
 
-async function safeGraphRead(path: string, token: string, fields: string): Promise<{
+async function safeGraphRead(path: string, token: string, fields: string, timeoutMs = 12000): Promise<{
   httpStatus: number;
   body: Record<string, unknown> | null;
   errorCode: number | null;
@@ -124,7 +124,7 @@ async function safeGraphRead(path: string, token: string, fields: string): Promi
   url.searchParams.set("fields", fields);
   url.searchParams.set("access_token", token);
   try {
-    const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(12000) });
+    const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(timeoutMs) });
     const data = await response.json() as unknown;
     const body = data && typeof data === "object" && !Array.isArray(data)
       ? data as Record<string, unknown> : null;
@@ -256,7 +256,7 @@ async function graphPost(path: string, fields: Record<string, string>): Promise<
 async function waitForContainerFinished(containerId: string, token: string): Promise<void> {
   const maxChecks = 8;
   for (let check = 0; check < maxChecks; check += 1) {
-    const state = await safeGraphRead(containerId, token, "status_code");
+    const state = await safeGraphRead(containerId, token, "status_code", 4000);
     if (state.httpStatus !== 200 || !state.body) {
       throw new InstagramContainerError(
         `container_status_unavailable_http_${state.httpStatus}_code_${state.errorCode ?? "none"}`,
