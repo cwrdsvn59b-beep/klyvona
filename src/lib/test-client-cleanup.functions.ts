@@ -3,9 +3,8 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 
 /**
- * READ ONLY: inspect client references in the active database.
- * This endpoint deliberately has no delete capability. Production cleanup
- * requires a separately reviewed implementation and explicit confirmation.
+ * Admin-only inspection and explicitly confirmed deletion of a fixed set of
+ * test clients. Never accepts arbitrary customer references for deletion.
  */
 const CHILD_TABLES = [
   "business_profiles",
@@ -102,4 +101,68 @@ export const inspectTestClients = createServerFn({ method: "POST" })
       safeToReview: missing.length === 0 && rows.length === data.references.length,
       readOnly: true,
     };
+  });
+
+/** Explicit allowlist: this maintenance operation cannot delete future real clients. */
+const CONFIRMED_TEST_REFERENCES = new Set([
+  "KV-X4WKZC", "KV-L6XE9Y", "KV-NDYMH6", "KV-J32PC5",
+  "KV-5NL7MT", "KV-625UT7", "KV-H6LNAK", "KV-FKH955",
+  "KV-ASGQ4M", "KV-G6G87U", "KV-P8C9G8", "KV-V9C6NT",
+]);
+
+export const deleteConfirmedTestClients = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Invalid delete request");
+    const body = input as { references?: unknown; ids?: unknown; confirmation?: unknown };
+    if (!Array.isArray(body.references) || !Array.isArray(body.ids) ||
+        body.references.length === 0 || body.references.length > 12 ||
+        body.ids.length !== body.references.length ||
+        !body.references.every((ref) => typeof ref === "string" && CONFIRMED_TEST_REFERENCES.has(ref)) ||
+        !body.ids.every((id) => typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)) ||
+        new Set(body.references).size !== body.references.length ||
+        new Set(body.ids).size !== body.ids.length ||
+        body.confirmation !== `DELETE ${body.references.length}`) {
+      throw new Error("Test client selection or confirmation is invalid");
+    }
+    return { references: body.references as string[], ids: body.ids as string[] };
+  })
+  .handler(async ({ context, data }) => {
+    const { resolveAdminAccess } = await import("@/lib/admin-grant.server");
+    const access = await resolveAdminAccess(context.userId);
+    if (!access.isAdmin) throw new Error("Administrator permission required");
+
+    const sql = await getSql();
+
+    // Require ON DELETE CASCADE for every direct FK to clients. Unknown schema
+    // changes fail closed instead of risking incomplete manual cleanup.
+    const fk = await sql.query<{ table_name: string; delete_action: string }>(
+      `select c.conrelid::regclass::text as table_name, c.confdeltype as delete_action
+       from pg_constraint c
+       where c.contype = 'f' and c.confrelid = 'clients'::regclass`,
+    );
+    if (fk.length === 0 || fk.some((row) => row.delete_action !== "c")) {
+      throw new Error("Deletion blocked: client foreign-key cascade rules require review");
+    }
+
+    // A single PostgreSQL statement is atomic even on the pooled connection.
+    // Both UUIDs and reference codes must match exactly, and all requested
+    // clients must still exist. No partial delete if a record is missing.
+    const deleted = await sql.query<{ reference_code: string }>(
+      `with matched as (
+         select id, reference_code from clients
+         where reference_code = any($1::text[]) and id = any($2::text[])
+       ), eligible as (
+         select id from matched
+         where (select count(*) from matched) = $3::int
+       )
+       delete from clients c where c.id in (select id from eligible)
+       returning c.reference_code`,
+      [data.references, data.ids, data.references.length],
+    );
+    if (deleted.length !== data.references.length ||
+        new Set(deleted.map((row) => row.reference_code)).size !== data.references.length) {
+      throw new Error("Deletion was not completed for all selected clients");
+    }
+    return { deleted: deleted.map((row) => row.reference_code) };
   });
