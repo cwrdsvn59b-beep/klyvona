@@ -10,6 +10,7 @@ import { eventStepLabel, showNotice, translateKnown } from "@/lib/i18n/surface";
 import { translate } from "@/lib/i18n/translate";
 import { industryLabel, planLabel, statusLabel, visualLabel, voiceLabel } from "@/lib/labels";
 import { ApprovalActions } from "@/components/approval-actions";
+import { InstagramTestPublish } from "@/components/instagram-test-publish";
 import { StatusPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 
@@ -228,6 +229,8 @@ function ClientPage() {
               {saved ? <p className="text-sm text-ok">{showNotice(locale, saved)}</p> : null}
             </div>
           </section>
+
+          <InstagramTestPublish reference={profile.reference} />
 
           <section className="rounded-2xl bg-surface p-4 shadow-card">
             <h2 className="font-semibold">{t("admin.jobs")}</h2>
