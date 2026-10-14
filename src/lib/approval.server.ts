@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getSql, type Sql } from "@/lib/db";
-import { secretMatches } from "@/lib/oauth/meta-guards";
+import { readStoredInstagramGrant, secretMatches } from "@/lib/oauth/meta-guards";
+import { openSecret } from "@/lib/crypto/tokens.server";
 import {
   approvalTransition,
   automationDecision,
@@ -253,41 +254,71 @@ export async function clientForConnectSecret(reference: string, connectSecret: s
   return { id: row.id, approvalStatus: isApprovalStatus(row.approval_status) ? row.approval_status : "pending_approval" };
 }
 
-/** Store a non-secret result of the existing read-only permission check. */
+/**
+ * Persist a verified permission verdict for the exact currently connected token.
+ * The OAuth-exchange grant is historical evidence, not a live recheck; it is
+ * trusted only when it is still embedded in this client's encrypted token and
+ * the read-only Meta identity check confirmed the same Instagram account.
+ */
 export async function rememberCheckedPermission(input: {
   reference: string;
   connectSecret: string;
   permission: string;
-}): Promise<void> {
-  if (input.permission !== "permission_confirmed" && input.permission !== "permission_missing" && input.permission !== "app_review_required") {
-    return;
-  }
+  identity: string;
+}, sql?: Sql): Promise<void> {
+  const historicalConfirmed = input.permission === "permission_confirmed_at_connection";
+  const historicalMissing = input.permission === "permission_missing_at_connection";
+  if (
+    input.identity !== "identity_confirmed" ||
+    !historicalConfirmed && !historicalMissing &&
+      input.permission !== "permission_confirmed" &&
+      input.permission !== "permission_missing" &&
+      input.permission !== "app_review_required"
+  ) return;
+
   const client = await clientForConnectSecret(input.reference.trim(), input.connectSecret);
   if (!client) return;
-  const sql = await getSql();
-  const rows = await sql<{ token_ciphertext: string | null }>`
-    select token_ciphertext from social_accounts
+  const db = sql ?? (await getSql());
+  const rows = await db<{
+    token_ciphertext: string | null;
+    external_account_id: string | null;
+    status: string;
+  }>`
+    select token_ciphertext, external_account_id, status from social_accounts
     where client_id = ${client.id} and platform = ${"instagram"}
     limit 1
   `;
-  const ciphertext = rows[0]?.token_ciphertext;
-  if (!ciphertext) return;
-  if (input.permission === "permission_confirmed") {
-    await sql`
-      update social_accounts
-      set publish_permission = 'confirmed',
-          publish_permission_token_hash = ${tokenHash(ciphertext)},
-          publish_permission_at = now()
-      where client_id = ${client.id} and platform = ${"instagram"} and token_ciphertext = ${ciphertext}
-    `;
-    return;
+  const account = rows[0];
+  const ciphertext = account?.token_ciphertext;
+  const accountId = account?.external_account_id;
+  if (!ciphertext || !accountId || account?.status !== "connected") return;
+
+  if (historicalConfirmed || historicalMissing) {
+    try {
+      const payload = JSON.parse(await openSecret(ciphertext)) as Record<string, unknown>;
+      const grant = readStoredInstagramGrant(payload);
+      if (
+        payload.v !== 2 ||
+        typeof payload.userToken !== "string" || !payload.userToken ||
+        payload.igUserId !== accountId ||
+        grant.source === "not_stored" ||
+        grant.status !== (historicalConfirmed ? "permissions_confirmed" : "permissions_missing")
+      ) return;
+    } catch {
+      return;
+    }
   }
-  await sql`
+
+  const confirmed = historicalConfirmed || input.permission === "permission_confirmed";
+  await db`
     update social_accounts
-    set publish_permission = 'missing',
-        publish_permission_token_hash = null,
+    set publish_permission = ${confirmed ? "confirmed" : "missing"},
+        publish_permission_token_hash = ${confirmed ? tokenHash(ciphertext) : null},
         publish_permission_at = now()
-    where client_id = ${client.id} and platform = ${"instagram"} and token_ciphertext = ${ciphertext}
+    where client_id = ${client.id} and platform = ${"instagram"}
+      and status = 'connected'
+      and external_account_id = ${accountId}
+      and token_ciphertext = ${ciphertext}
   `;
 }
 
