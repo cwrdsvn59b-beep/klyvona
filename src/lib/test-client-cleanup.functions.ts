@@ -3,8 +3,8 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 
 /**
- * Admin-only inspection and explicitly confirmed deletion of a fixed set of
- * test clients. Never accepts arbitrary customer references for deletion.
+ * Admin-only client inspection and explicitly confirmed deletion. Client IDs
+ * and references must match exactly; deletion is limited to selected rows.
  */
 const CHILD_TABLES = [
   "business_profiles",
@@ -103,27 +103,20 @@ export const inspectTestClients = createServerFn({ method: "POST" })
     };
   });
 
-/** Explicit allowlist: this maintenance operation cannot delete future real clients. */
-const CONFIRMED_TEST_REFERENCES = new Set([
-  "KV-X4WKZC", "KV-L6XE9Y", "KV-NDYMH6", "KV-J32PC5",
-  "KV-5NL7MT", "KV-625UT7", "KV-H6LNAK", "KV-FKH955",
-  "KV-ASGQ4M", "KV-G6G87U", "KV-P8C9G8", "KV-V9C6NT",
-]);
-
 export const deleteConfirmedTestClients = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: unknown) => {
     if (!input || typeof input !== "object") throw new Error("Invalid delete request");
     const body = input as { references?: unknown; ids?: unknown; confirmation?: unknown };
     if (!Array.isArray(body.references) || !Array.isArray(body.ids) ||
-        body.references.length === 0 || body.references.length > 12 ||
+        body.references.length === 0 || body.references.length > 30 ||
         body.ids.length !== body.references.length ||
-        !body.references.every((ref) => typeof ref === "string" && CONFIRMED_TEST_REFERENCES.has(ref)) ||
+        !body.references.every((ref) => typeof ref === "string" && /^KV-[A-Z0-9]{6}$/.test(ref)) ||
         !body.ids.every((id) => typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)) ||
         new Set(body.references).size !== body.references.length ||
         new Set(body.ids).size !== body.ids.length ||
         body.confirmation !== `DELETE ${body.references.length}`) {
-      throw new Error("Test client selection or confirmation is invalid");
+      throw new Error("Client selection or confirmation is invalid");
     }
     return { references: body.references as string[], ids: body.ids as string[] };
   })
