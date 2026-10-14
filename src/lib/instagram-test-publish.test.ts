@@ -20,7 +20,8 @@ describe("single-attempt Instagram test publication safety invariants", () => {
     assert.match(source, /liveInstagramGraph\.profile\(token\)/);
     assert.match(source, /sa\.publish_permission_token_hash =/);
     assert.match(source, /c\.approval_status = 'approved'/);
-    assert.match(source, /on conflict \(client_id\) do nothing/);
+    assert.match(source, /on conflict do nothing/);
+    assert.match(migration, /instagram_account_id text not null unique/);
     assert.match(migration, /client_id text primary key/);
   });
   it("never retries a publish request and records uncertain outcomes", () => {
