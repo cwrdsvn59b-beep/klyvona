@@ -236,6 +236,8 @@ export const en = {
   "oauth.verify.stillUnverified": "{message} Publishing is still not approved.",
   "oauth.permission.permission_confirmed": "Publishing permission was confirmed. No content was published.",
   "oauth.permission.permission_missing": "Publishing permission was not granted.",
+  "oauth.permission.permission_confirmed_at_connection": "Meta granted publishing permission during connection; it has not been checked again live. No content was published.",
+  "oauth.permission.permission_missing_at_connection": "Meta did not grant publishing permission during connection; a live recheck was not performed.",
   "oauth.permission.verification_unavailable": "Publishing permission could not be confirmed with a safe check.",
   "oauth.permission.app_review_required": "Meta advanced access is required before publishing to customer accounts.",
   "oauth.permission.temporary_error": "Temporary error during the check.",
