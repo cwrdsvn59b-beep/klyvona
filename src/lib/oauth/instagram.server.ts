@@ -18,6 +18,7 @@ import {
   instagramConnectReturn,
   instagramUsername,
   instagramPermissionVerdict,
+  instagramPermissionWithStoredEvidence,
   instagramVerifyVerdict,
   preserveInstagramIds,
   readInstagramProfile,
@@ -500,11 +501,18 @@ export async function checkInstagramPublishPermission(
       grantSource: storedGrant.source,
       permissionsPresent: storedGrant.granted.length > 0,
     });
+    const verdict = instagramPermissionVerdict({ identityConfirmed: identity.identityConfirmed, failure, permissions });
+    const permission = instagramPermissionWithStoredEvidence({
+      live: verdict.permission,
+      identityConfirmed: identity.identityConfirmed,
+      stored: storedGrant,
+    });
     return noStore({
       identity: identity.check,
       identityConfirmed: identity.identityConfirmed,
       username: identity.username,
-      ...instagramPermissionVerdict({ identityConfirmed: identity.identityConfirmed, failure, permissions }),
+      ...verdict,
+      permission,
       grantAtConnection: storedGrant.status,
       grantSource: storedGrant.source,
       liveRecheck: "not_performed",
