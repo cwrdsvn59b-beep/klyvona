@@ -179,7 +179,8 @@ describe("instagram reauthorization", () => {
       assert.equal(permission.grantAtConnection, "permissions_confirmed");
       assert.equal(permission.grantSource, "oauth_exchange");
       assert.equal(permission.liveRecheck, "not_performed");
-      assert.equal(permission.permission, "verification_unavailable");
+      assert.equal(permission.permission, "permission_confirmed_at_connection");
+      assert.equal(permission.publishingTested, false);
       assert.equal(JSON.stringify(permission).includes("new-token"), false);
       assert.equal(JSON.stringify(permission).includes("instagram_business_content_publish"), false);
     } finally {
