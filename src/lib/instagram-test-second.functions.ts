@@ -23,7 +23,7 @@ type TestRow = {
 
 type GraphResult = { id?: unknown; permalink?: unknown };
 
-class InstagramGraphPostError extends Error {
+export class InstagramGraphPostError extends Error {
   readonly safeCode: string;
   readonly definitive: boolean;
   constructor(safeCode: string, definitive: boolean) {
@@ -34,7 +34,7 @@ class InstagramGraphPostError extends Error {
   }
 }
 
-class InstagramContainerError extends Error {
+export class InstagramContainerError extends Error {
   readonly safeCode: string;
   constructor(safeCode: string) {
     super(safeCode);
@@ -197,6 +197,109 @@ export async function recordSecondAttempt(sql: Sql, attemptId: string, clientId:
   }
 }
 
+type GraphPost = (path: string, fields: Record<string, string>) => Promise<GraphResult>;
+
+export type SecondPublishResult =
+  | { ok: true; code: "published"; mediaId: string }
+  | { ok: false; code: string };
+
+/**
+ * One reserved second attempt. `media_publish` starts only after its
+ * `publish_requested` row is stored. A database failure before that POST is
+ * not an unknown publish result and does not send the request.
+ */
+export async function runReservedSecondPublish(input: {
+  sql: Sql;
+  attemptId: string;
+  clientId: string;
+  externalAccountId: string;
+  token: string;
+  imageUrl: string;
+  caption: string;
+  post?: GraphPost;
+  waitUntilFinished?: (containerId: string, token: string) => Promise<void>;
+}): Promise<SecondPublishResult> {
+  const post = input.post ?? graphPost;
+  const waitUntilFinished = input.waitUntilFinished ?? waitForContainerFinished;
+  let stage = "reserved";
+  let containerPostStarted = false;
+  let publishPostStarted = false;
+  let containerId = "";
+  let publishedMediaId = "";
+  try {
+    await recordSecondAttempt(input.sql, input.attemptId, input.clientId, "container_requested");
+    stage = "container_requested";
+    containerPostStarted = true;
+    const container = await post(`${input.externalAccountId}/media`, {
+      image_url: input.imageUrl,
+      caption: input.caption,
+      access_token: input.token,
+    });
+    containerId = String(container.id);
+    const prior = await input.sql<{ container_id: string | null }>`
+      select container_id from instagram_test_publications where client_id = ${input.clientId}
+    `;
+    if (reusedTestContainer(prior.map((item) => item.container_id), containerId)) {
+      await recordSecondAttempt(input.sql, input.attemptId, input.clientId, "failed_before_request", { errorCode: "reused_container" });
+      return { ok: false, code: "no_publish_request_sent_locked" };
+    }
+    await recordSecondAttempt(input.sql, input.attemptId, input.clientId, "container_created", { containerId });
+    stage = "container_created";
+    await waitUntilFinished(containerId, input.token);
+    await recordSecondAttempt(input.sql, input.attemptId, input.clientId, "publish_requested");
+    stage = "publish_requested";
+    publishPostStarted = true;
+    const published = await post(`${input.externalAccountId}/media_publish`, {
+      creation_id: containerId,
+      access_token: input.token,
+    });
+    publishedMediaId = String(published.id);
+    stage = "publish_confirmed";
+    await recordSecondAttempt(input.sql, input.attemptId, input.clientId, "published", {
+      containerId,
+      mediaId: publishedMediaId,
+    });
+    return { ok: true, code: "published", mediaId: publishedMediaId };
+  } catch (error) {
+    const stateNotPersisted = error instanceof SecondAttemptStateError;
+    const containerUnknown = containerPostStarted
+      && stage === "container_requested"
+      && error instanceof InstagramGraphPostError
+      && !error.definitive;
+    const safeCode = stateNotPersisted
+      ? error.safeCode
+      : error instanceof InstagramGraphPostError
+        ? error.safeCode
+        : error instanceof InstagramContainerError
+          ? error.safeCode
+          : publishPostStarted && stage === "publish_confirmed"
+            ? "database_persist_failed_after_meta_success"
+            : publishPostStarted
+              ? "publish_result_unknown"
+              : containerUnknown
+                ? "container_result_unknown"
+                : "internal_error_before_publish";
+    const definitelyNoPublish = !publishPostStarted && !containerUnknown;
+    try {
+      await recordSecondAttempt(input.sql, input.attemptId, input.clientId, definitelyNoPublish ? "failed_before_request" : "uncertain", {
+        containerId: containerId || undefined,
+        mediaId: publishedMediaId || undefined,
+        errorCode: safeCode,
+      });
+    } catch {
+      // The unique reservation remains and blocks another POST.
+    }
+    if (publishPostStarted && stage === "publish_confirmed") {
+      return { ok: false, code: "published_but_database_confirmation_failed_no_retry" };
+    }
+    if (definitelyNoPublish) return { ok: false, code: "no_publish_request_sent_locked" };
+    if (error instanceof InstagramGraphPostError && error.definitive) {
+      return { ok: false, code: "meta_rejected_no_retry" };
+    }
+    return { ok: false, code: "uncertain_check_instagram_no_retry" };
+  }
+}
+
 export const publishSecondInstagramTest = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((value: unknown) => {
@@ -275,69 +378,13 @@ export const publishSecondInstagramTest = createServerFn({ method: "POST" })
     });
     if (!reserved) return { ok: false as const, code: "already_attempted_or_gates_changed" };
 
-    let stage = "reserved";
-    let containerId = "";
-    let publishedMediaId = "";
-    try {
-      stage = "container_requested";
-      await recordSecondAttempt(sql, reserved.id, row.id, stage);
-      const container = await graphPost(`${row.external_account_id}/media`, {
-        image_url: TEST_IMAGE_URL,
-        caption: CAPTION,
-        access_token: token,
-      });
-      containerId = String(container.id);
-      const prior = await sql<{ container_id: string | null }>`
-        select container_id from instagram_test_publications where client_id = ${row.id}
-      `;
-      if (reusedTestContainer(prior.map((item) => item.container_id), containerId)) {
-        stage = "container_created";
-        await recordSecondAttempt(sql, reserved.id, row.id, "failed_before_request", { errorCode: "reused_container" });
-        return { ok: false as const, code: "no_publish_request_sent_locked" };
-      }
-      stage = "container_created";
-      await recordSecondAttempt(sql, reserved.id, row.id, stage, { containerId });
-      await waitForContainerFinished(containerId, token);
-      stage = "publish_requested";
-      await recordSecondAttempt(sql, reserved.id, row.id, stage);
-      const published = await graphPost(`${row.external_account_id}/media_publish`, {
-        creation_id: containerId,
-        access_token: token,
-      });
-      publishedMediaId = String(published.id);
-      stage = "publish_confirmed";
-      await recordSecondAttempt(sql, reserved.id, row.id, "published", { containerId, mediaId: publishedMediaId });
-      return { ok: true as const, code: "published", mediaId: publishedMediaId };
-    } catch (error) {
-      const stateNotPersisted = error instanceof SecondAttemptStateError;
-      const safeCode = stateNotPersisted
-        ? error.safeCode
-        : error instanceof InstagramGraphPostError
-        ? error.safeCode
-        : error instanceof InstagramContainerError
-          ? error.safeCode
-          : stage === "publish_confirmed"
-            ? "database_persist_failed_after_meta_success"
-            : stage === "publish_requested"
-              ? "publish_result_unknown"
-              : stage === "container_requested"
-                ? "container_result_unknown"
-                : "internal_error_before_publish";
-      const definitelyNoPublish = (stateNotPersisted && stage !== "publish_confirmed")
-        || (stage === "container_created" && error instanceof InstagramContainerError)
-        || (stage === "container_requested" && error instanceof InstagramGraphPostError && error.definitive);
-      try {
-        await recordSecondAttempt(sql, reserved.id, row.id, definitelyNoPublish ? "failed_before_request" : "uncertain", {
-          containerId: containerId || undefined,
-          mediaId: publishedMediaId || undefined,
-          errorCode: safeCode,
-        });
-      } catch {
-        // The unique reservation remains and blocks another POST.
-      }
-      if (stage === "publish_confirmed") return { ok: false as const, code: "published_but_database_confirmation_failed_no_retry" };
-      if (definitelyNoPublish) return { ok: false as const, code: "no_publish_request_sent_locked" };
-      if (error instanceof InstagramGraphPostError && error.definitive) return { ok: false as const, code: "meta_rejected_no_retry" };
-      return { ok: false as const, code: "uncertain_check_instagram_no_retry" };
-    }
+    return runReservedSecondPublish({
+      sql,
+      attemptId: reserved.id,
+      clientId: row.id,
+      externalAccountId: row.external_account_id,
+      token,
+      imageUrl: TEST_IMAGE_URL,
+      caption: CAPTION,
+    });
   });

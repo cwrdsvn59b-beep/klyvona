@@ -280,7 +280,7 @@ async function waitForContainerFinished(containerId: string, token: string): Pro
 async function recordStage(sql: Sql, clientId: string, status: string, fields?: {
   containerId?: string; mediaId?: string; permalink?: string; errorCode?: string;
 }) {
-  await sql`
+  const updated = await sql<{ client_id: string }>`
     update instagram_test_publications
     set status = ${status},
         container_id = coalesce(${fields?.containerId ?? null}, container_id),
@@ -289,7 +289,11 @@ async function recordStage(sql: Sql, clientId: string, status: string, fields?: 
         error_code = ${fields?.errorCode ?? null},
         updated_at = now()
     where client_id = ${clientId}
+    returning client_id
   `;
+  if (updated.length !== 1 || updated[0]?.client_id !== clientId) {
+    throw new Error("instagram_test_state_not_persisted");
+  }
 }
 
 export const publishOneInstagramTest = createServerFn({ method: "POST" })
@@ -373,26 +377,30 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
     if (!reserved[0]) return { ok: false as const, code: "already_attempted_or_gates_changed" };
 
     let stage = "reserved";
+    let containerPostStarted = false;
+    let publishPostStarted = false;
     let containerId = "";
     let publishedMediaId = "";
     try {
+      await recordStage(sql, row.id, "container_requested");
       stage = "container_requested";
-      await recordStage(sql, row.id, stage);
+      containerPostStarted = true;
       const container = await graphPost(`${row.external_account_id}/media`, {
         image_url: TEST_IMAGE_URL,
         caption: CAPTION,
         access_token: token,
       });
       containerId = String(container.id);
+      await recordStage(sql, row.id, "container_created", { containerId });
       stage = "container_created";
-      await recordStage(sql, row.id, stage, { containerId });
 
       // The container must be FINISHED before /media_publish. Read-only GET
       // polling is bounded; if not ready, fail closed without any publish call.
       await waitForContainerFinished(containerId, token);
 
+      await recordStage(sql, row.id, "publish_requested");
       stage = "publish_requested";
-      await recordStage(sql, row.id, stage);
+      publishPostStarted = true;
       const published = await graphPost(`${row.external_account_id}/media_publish`, {
         creation_id: containerId,
         access_token: token,
@@ -419,23 +427,24 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
       } catch { /* Publication already succeeded; do not retry. */ }
       return { ok: true as const, code: "published", mediaId, permalink };
     } catch (error) {
-      // Never unlock the reservation. Distinguish explicit Meta rejection,
-      // container processing, ambiguous transport, and DB persistence failures.
+      // Never unlock the reservation. A database failure before the publish
+      // POST is not an unknown Meta result and must not be retried as one.
+      const containerUnknown = containerPostStarted
+        && stage === "container_requested"
+        && error instanceof InstagramGraphPostError
+        && !error.definitive;
+      const definitelyNoPublish = !publishPostStarted && !containerUnknown;
       const safeCode = error instanceof InstagramGraphPostError
         ? error.safeCode
         : error instanceof InstagramContainerError
           ? error.safeCode
-          : stage === "publish_confirmed"
+          : publishPostStarted && stage === "publish_confirmed"
             ? "database_persist_failed_after_meta_success"
-            : stage === "publish_requested"
+            : publishPostStarted
               ? "publish_result_unknown"
-              : stage === "container_requested"
+              : containerUnknown
                 ? "container_result_unknown"
                 : "internal_error_before_publish";
-      const definitelyNoPublish = stage === "container_created" &&
-        error instanceof InstagramContainerError ||
-        stage === "container_requested" &&
-        error instanceof InstagramGraphPostError && error.definitive;
       try {
         await recordStage(sql, row.id, definitelyNoPublish ? "failed_before_request" : "uncertain", {
           containerId: containerId || undefined,
@@ -445,7 +454,7 @@ export const publishOneInstagramTest = createServerFn({ method: "POST" })
       } catch {
         // Even if DB update fails, unique reservation remains and prevents retry.
       }
-      if (stage === "publish_confirmed") {
+      if (publishPostStarted && stage === "publish_confirmed") {
         return { ok: false as const, code: "published_but_database_confirmation_failed_no_retry" };
       }
       if (definitelyNoPublish) {

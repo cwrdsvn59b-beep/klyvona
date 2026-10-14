@@ -111,14 +111,13 @@ describe("second Instagram test publication", () => {
     assert.match(source, /on conflict do nothing/);
     assert.match(source, /returning id/);
     assert.match(source, /updated\.length !== 1/);
-    const readyAt = source.indexOf("await waitForContainerFinished(containerId, token)");
-    const publishAt = source.indexOf("const published = await graphPost");
-    const gate = source.slice(readyAt, publishAt);
-    assert.match(gate, /stage = "publish_requested"/);
-    assert.ok(gate.indexOf("stage = \"publish_requested\"") < gate.indexOf("await recordSecondAttempt"));
-    assert.doesNotMatch(gate, /media_publish/);
-    assert.match(source, /stateNotPersisted && stage !== "publish_confirmed"/);
-    assert.ok(source.indexOf("await waitForContainerFinished(containerId, token)") < source.indexOf("const published = await graphPost"));
+    const readyAt = source.indexOf("await waitUntilFinished(containerId, input.token)");
+    const savedAt = source.indexOf("await recordSecondAttempt(input.sql, input.attemptId, input.clientId, \"publish_requested\")");
+    const publishAt = source.indexOf("await post(`${input.externalAccountId}/media_publish`");
+    assert.ok(readyAt >= 0 && savedAt > readyAt && publishAt > savedAt);
+    assert.ok(source.indexOf("publishPostStarted = true") > savedAt);
+    assert.ok(source.indexOf("publishPostStarted = true") < publishAt);
+    assert.match(source, /const definitelyNoPublish = !publishPostStarted && !containerUnknown/);
     const publishCalls = source.match(/\/media_publish`/g) ?? [];
     assert.equal(publishCalls.length, 1);
     assert.doesNotMatch(source, /while\s*\(|setInterval/);
@@ -234,5 +233,202 @@ describe("second Instagram test publication", () => {
     const errorStore = source.slice(source.indexOf("const safeCode"), source.indexOf("const definitelyNoPublish"));
     assert.equal(errorStore.includes("userToken"), false);
     assert.equal(errorStore.includes("access_token"), false);
+  });
+
+  it("does not call media_publish when Neon refuses the pre-publish write", async () => {
+    const { reserveSecondInstagramAttempt, runReservedSecondPublish } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    const before = await originalAttempt(sql);
+    await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-1" });
+    const calls: string[] = [];
+    const refusing = (async <T>(strings: TemplateStringsArray, ...values: unknown[]) => {
+      const text = strings.join(" ");
+      if (text.includes("update instagram_test_publication_attempts") && values[0] === "publish_requested") {
+        throw new Error("neon_write_refused");
+      }
+      return sql<T>(strings, ...values);
+    }) as Sql;
+    refusing.query = sql.query;
+    const result = await runReservedSecondPublish({
+      sql: refusing,
+      attemptId: "second-1",
+      clientId: input.clientId,
+      externalAccountId: input.externalAccountId,
+      token: "not-a-live-token",
+      imageUrl: "https://example.test/klyvona.jpg",
+      caption: "test",
+      waitUntilFinished: async () => {},
+      post: async (path) => {
+        calls.push(path);
+        if (path.endsWith("/media_publish")) throw new Error("publish must not be sent");
+        return { id: "17841499900000099" };
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "no_publish_request_sent_locked");
+    assert.equal(calls.some((path) => path.endsWith("/media_publish")), false);
+    const second = await sql<{ status: string; error_code: string | null }>`
+      select status, error_code from instagram_test_publication_attempts where id = 'second-1'
+    `;
+    assert.equal(second[0]?.status, "failed_before_request");
+    assert.equal(second[0]?.error_code, "internal_error_before_publish");
+    assert.notEqual(second[0]?.error_code, "publish_result_unknown");
+    assert.deepEqual(await originalAttempt(sql), before);
+  });
+
+  it("stores an unknown media_publish result once and does not send it again", async () => {
+    const { InstagramGraphPostError, reserveSecondInstagramAttempt, runReservedSecondPublish } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    const before = await originalAttempt(sql);
+    await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-1" });
+    const calls: string[] = [];
+    const post = async (path: string) => {
+      calls.push(path);
+      if (path.endsWith("/media_publish")) throw new InstagramGraphPostError("meta_post_transport_unknown", false);
+      return { id: "17841499900000099" };
+    };
+    const result = await runReservedSecondPublish({
+      sql,
+      attemptId: "second-1",
+      clientId: input.clientId,
+      externalAccountId: input.externalAccountId,
+      token: "not-a-live-token",
+      imageUrl: "https://example.test/klyvona.jpg",
+      caption: "test",
+      waitUntilFinished: async () => {},
+      post,
+    });
+    assert.deepEqual(result, { ok: false, code: "uncertain_check_instagram_no_retry" });
+    assert.equal(calls.filter((path) => path.endsWith("/media_publish")).length, 1);
+    const second = await sql<{ status: string; error_code: string | null; container_id: string | null }>`
+      select status, error_code, container_id from instagram_test_publication_attempts where id = 'second-1'
+    `;
+    assert.equal(second[0]?.status, "uncertain");
+    assert.equal(second[0]?.error_code, "meta_post_transport_unknown");
+    assert.equal(second[0]?.container_id, "17841499900000099");
+    assert.equal(await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-2" }), null);
+    assert.deepEqual(await originalAttempt(sql), before);
+  });
+
+  it("does not treat a Meta 4xx or a PUBLISHED container as permission to publish", async () => {
+    const { InstagramContainerError, InstagramGraphPostError, reserveSecondInstagramAttempt, runReservedSecondPublish } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-1" });
+    const calls: string[] = [];
+    const rejected = await runReservedSecondPublish({
+      sql,
+      attemptId: "second-1",
+      clientId: input.clientId,
+      externalAccountId: input.externalAccountId,
+      token: "not-a-live-token",
+      imageUrl: "https://example.test/klyvona.jpg",
+      caption: "test",
+      waitUntilFinished: async () => {},
+      post: async (path) => {
+        calls.push(path);
+        throw new InstagramGraphPostError("meta_http_400_code_100_sub_none", true);
+      },
+    });
+    assert.equal(rejected.code, "no_publish_request_sent_locked");
+    assert.equal(calls.filter((path) => path.endsWith("/media_publish")).length, 0);
+    const blocked = await sql<{ status: string }>`select status from instagram_test_publication_attempts where id = 'second-1'`;
+    assert.equal(blocked[0]?.status, "failed_before_request");
+
+    const sql2 = await database();
+    await reserveSecondInstagramAttempt(sql2, { ...input, attemptId: "second-1" });
+    const publishCalls: string[] = [];
+    const alreadyMarked = await runReservedSecondPublish({
+      sql: sql2,
+      attemptId: "second-1",
+      clientId: input.clientId,
+      externalAccountId: input.externalAccountId,
+      token: "not-a-live-token",
+      imageUrl: "https://example.test/klyvona.jpg",
+      caption: "test",
+      post: async (path) => {
+        publishCalls.push(path);
+        return { id: "17841499900000099" };
+      },
+      waitUntilFinished: async () => {
+        throw new InstagramContainerError("container_status_published");
+      },
+    });
+    assert.equal(alreadyMarked.code, "no_publish_request_sent_locked");
+    assert.equal(publishCalls.filter((path) => path.endsWith("/media_publish")).length, 0);
+    assert.equal((await originalAttempt(sql2))?.status, "uncertain");
+  });
+
+  it("keeps the media id when the published row cannot be saved and does not post twice", async () => {
+    const { reserveSecondInstagramAttempt, runReservedSecondPublish } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    const before = await originalAttempt(sql);
+    await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-1" });
+    let updates = 0;
+    const calls: string[] = [];
+    const refusing = (async <T>(strings: TemplateStringsArray, ...values: unknown[]) => {
+      const text = strings.join(" ");
+      if (text.includes("update instagram_test_publication_attempts") && values[0] === "published") {
+        updates += 1;
+        throw new Error("neon_write_refused");
+      }
+      return sql<T>(strings, ...values);
+    }) as Sql;
+    refusing.query = sql.query;
+    const result = await runReservedSecondPublish({
+      sql: refusing,
+      attemptId: "second-1",
+      clientId: input.clientId,
+      externalAccountId: input.externalAccountId,
+      token: "not-a-live-token",
+      imageUrl: "https://example.test/klyvona.jpg",
+      caption: "test",
+      waitUntilFinished: async () => {},
+      post: async (path) => {
+        calls.push(path);
+        return { id: path.endsWith("/media_publish") ? "17841499900000111" : "17841499900000099" };
+      },
+    });
+    assert.deepEqual(result, { ok: false, code: "published_but_database_confirmation_failed_no_retry" });
+    assert.equal(calls.filter((path) => path.endsWith("/media_publish")).length, 1);
+    assert.equal(updates, 1);
+    const second = await sql<{ status: string; media_id: string | null; error_code: string | null }>`
+      select status, media_id, error_code from instagram_test_publication_attempts where id = 'second-1'
+    `;
+    assert.equal(second[0]?.status, "uncertain");
+    assert.equal(second[0]?.media_id, "17841499900000111");
+    assert.equal(second[0]?.error_code, "database_persist_failed_after_meta_success");
+    assert.deepEqual(await originalAttempt(sql), before);
+  });
+
+  it("saves a successful publish once and leaves the first uncertain row untouched", async () => {
+    const { reserveSecondInstagramAttempt, runReservedSecondPublish } = await import("./instagram-test-second.functions.ts");
+    const sql = await database();
+    const before = await originalAttempt(sql);
+    await reserveSecondInstagramAttempt(sql, { ...input, attemptId: "second-1" });
+    const calls: string[] = [];
+    const result = await runReservedSecondPublish({
+      sql,
+      attemptId: "second-1",
+      clientId: input.clientId,
+      externalAccountId: input.externalAccountId,
+      token: "not-a-live-token",
+      imageUrl: "https://example.test/klyvona.jpg",
+      caption: "test",
+      waitUntilFinished: async () => {},
+      post: async (path) => {
+        calls.push(path);
+        return { id: path.endsWith("/media_publish") ? "17841499900000111" : "17841499900000099" };
+      },
+    });
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.mediaId, "17841499900000111");
+    assert.equal(calls.filter((path) => path.endsWith("/media_publish")).length, 1);
+    const second = await sql<{ status: string; media_id: string | null; container_id: string | null }>`
+      select status, media_id, container_id from instagram_test_publication_attempts where id = 'second-1'
+    `;
+    assert.equal(second[0]?.status, "published");
+    assert.equal(second[0]?.media_id, "17841499900000111");
+    assert.equal(second[0]?.container_id, "17841499900000099");
+    assert.deepEqual(await originalAttempt(sql), before);
   });
 });
