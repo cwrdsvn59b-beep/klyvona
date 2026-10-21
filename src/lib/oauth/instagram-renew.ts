@@ -46,8 +46,10 @@ export function instagramRenewWrite(input: {
   if (input.previous && typeof input.previous === "object" && ("grantStatus" in input.previous || "grantedPermissions" in input.previous)) {
     const stored = readStoredInstagramGrant(input.previous);
     tokenPayload.grantStatus = stored.status;
-    tokenPayload.grantSource = "preserved_on_refresh";
-    if (stored.status !== "permissions_unknown") tokenPayload.grantedPermissions = stored.granted;
+    if (stored.source === "oauth_exchange" || stored.source === "preserved_on_refresh") {
+      tokenPayload.grantSource = stored.source;
+    }
+    if (stored.status !== "permissions_unknown") tokenPayload.grantedPermissions = [...stored.granted];
   }
   return {
     tokenPayload,

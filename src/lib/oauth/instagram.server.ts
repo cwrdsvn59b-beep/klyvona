@@ -572,11 +572,12 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
     return noStore({ error: "unauthorized" }, 401);
   }
   const db = sql ?? (await getSql());
-  const rows = await db<{ token_ciphertext: string | null }>`
-    select token_ciphertext from social_accounts
+  const rows = await db<{ token_ciphertext: string | null; external_account_id: string | null }>`
+    select token_ciphertext, external_account_id from social_accounts
     where client_id = ${parsed.client.id} and platform = ${"instagram"} limit 1
   `;
   const sealed = rows[0]?.token_ciphertext;
+  const accountId = rows[0]?.external_account_id ?? null;
   if (!sealed) return noStore({ error: "reconnect_required" }, 409);
   try {
     const saved = JSON.parse(await openSecret(sealed)) as { v?: number; userToken?: string; igUserId?: string; username?: string };
@@ -594,7 +595,10 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
     const updated = await db<{ id: string }>`
       update social_accounts
       set status = 'connected', token_ciphertext = ${packed}, token_expires_at = ${record.expiresAt}, last_error = null
-      where client_id = ${parsed.client.id} and platform = ${"instagram"} and token_ciphertext = ${sealed}
+      where client_id = ${parsed.client.id}
+        and platform = ${"instagram"}
+        and token_ciphertext = ${sealed}
+        and external_account_id is not distinct from ${accountId}
       returning id
     `;
     if (!updated[0]) {
@@ -610,7 +614,10 @@ export async function renewInstagram(request: Request, graph: InstagramGraph = l
     const expired = await db<{ id: string }>`
       update social_accounts
       set status = 'expired', last_error = ${"ההרשאה פגה או בוטלה. יש לחבר מחדש."}
-      where client_id = ${parsed.client.id} and platform = ${"instagram"} and token_ciphertext = ${sealed}
+      where client_id = ${parsed.client.id}
+        and platform = ${"instagram"}
+        and token_ciphertext = ${sealed}
+        and external_account_id is not distinct from ${accountId}
       returning id
     `;
     if (!expired[0]) return noStore({ ok: false, error: "token_replaced", kept: true }, 409);

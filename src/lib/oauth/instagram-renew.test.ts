@@ -57,8 +57,17 @@ describe("instagram renew target", () => {
     };
     const carried = instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: 60, now, previous });
     assert.equal(carried.tokenPayload.grantStatus, "permissions_confirmed");
-    assert.equal(carried.tokenPayload.grantSource, "preserved_on_refresh");
+    assert.equal(carried.tokenPayload.grantSource, "oauth_exchange");
     assert.deepEqual(carried.tokenPayload.grantedPermissions, previous.grantedPermissions);
+    const remembered = instagramRenewWrite({
+      accessToken: "refreshed-token",
+      igUserId: "1789",
+      expiresIn: 60,
+      now,
+      previous: { ...previous, grantSource: "preserved_on_refresh" },
+    });
+    assert.equal(remembered.tokenPayload.grantSource, "preserved_on_refresh");
+    assert.deepEqual(remembered.tokenPayload.grantedPermissions, previous.grantedPermissions);
     const unknown = instagramRenewWrite({
       accessToken: "refreshed-token",
       igUserId: "1789",
@@ -67,7 +76,7 @@ describe("instagram renew target", () => {
       previous: { v: 2, userToken: "old-token", igUserId: "1789", grantStatus: "permissions_unknown", grantSource: "oauth_exchange" },
     });
     assert.equal(unknown.tokenPayload.grantStatus, "permissions_unknown");
-    assert.equal(unknown.tokenPayload.grantSource, "preserved_on_refresh");
+    assert.equal(unknown.tokenPayload.grantSource, "oauth_exchange");
     assert.equal(unknown.tokenPayload.grantedPermissions, undefined);
     const untouched = instagramRenewWrite({ accessToken: "refreshed-token", igUserId: "1789", expiresIn: 60, now, previous: { v: 2, userToken: "old-token", igUserId: "1789" } });
     assert.equal(untouched.tokenPayload.grantStatus, undefined);

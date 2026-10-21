@@ -348,7 +348,7 @@ describe("oauth diagnostic trace", () => {
     }
   });
 
-  it("shows renew after confirmation rewriting the grant source", async () => {
+  it("keeps the oauth grant when refresh runs after confirmation", async () => {
     const restoreEnv = useTestEnv();
     const restoreFetch = mockCallbackFetch();
     const { db, sql } = await createDatabase();
@@ -367,11 +367,22 @@ describe("oauth diagnostic trace", () => {
       assert.ok(names.indexOf("instagram_renew") < names.lastIndexOf("permissions_checked"));
       const renewed = trace.find((entry) => entry.operation === "instagram_renew");
       const checked = trace.filter((entry) => entry.operation === "permissions_checked").at(-1);
-      assert.equal(renewed?.grantSource, "preserved_on_refresh");
+      assert.equal(renewed?.grantSource, "oauth_exchange");
       assert.equal(renewed?.grantStatus, "permissions_confirmed");
       assert.equal(renewed?.permissionsPresent, true);
-      assert.equal(checked?.grantSource, "preserved_on_refresh");
+      assert.equal(checked?.grantSource, "oauth_exchange");
       assert.equal(checked?.grantStatus, "permissions_confirmed");
+      const stored = await sql<{ token_ciphertext: string }>`select token_ciphertext from social_accounts where client_id = ${"client-1"} and platform = ${"instagram"}`;
+      const opened = JSON.parse(await openSecret(stored[0]?.token_ciphertext ?? "")) as {
+        userToken?: string;
+        grantStatus?: string;
+        grantSource?: string;
+        grantedPermissions?: string[];
+      };
+      assert.equal(opened.userToken, "refreshed-token");
+      assert.equal(opened.grantStatus, "permissions_confirmed");
+      assert.equal(opened.grantSource, "oauth_exchange");
+      assert.deepEqual(opened.grantedPermissions, ["instagram_business_basic", "instagram_business_content_publish"]);
       assertNoSecrets(trace);
     } finally {
       clearOAuthTrace();
@@ -419,9 +430,16 @@ describe("oauth diagnostic trace", () => {
       assert.equal(transferred?.result, "success");
       assert.equal(transferred?.grantSource, "oauth_exchange");
       const stored = await sql<{ token_ciphertext: string }>`select token_ciphertext from social_accounts where id = ${"social-1"}`;
-      const opened = JSON.parse(await openSecret(stored[0]?.token_ciphertext ?? "")) as { userToken?: string; grantSource?: string };
+      const opened = JSON.parse(await openSecret(stored[0]?.token_ciphertext ?? "")) as {
+        userToken?: string;
+        grantStatus?: string;
+        grantSource?: string;
+        grantedPermissions?: string[];
+      };
       assert.equal(opened.userToken, "long-lived-token");
+      assert.equal(opened.grantStatus, "permissions_confirmed");
       assert.equal(opened.grantSource, "oauth_exchange");
+      assert.deepEqual(opened.grantedPermissions, ["instagram_business_basic", "instagram_business_content_publish"]);
       assertNoSecrets(readOAuthTrace());
     } finally {
       clearOAuthTrace();
@@ -522,6 +540,14 @@ describe("oauth diagnostic trace", () => {
       const stored = await sql<{ token_ciphertext: string; status: string }>`select token_ciphertext, status from social_accounts where id = ${"social-1"}`;
       assert.equal(stored[0]?.token_ciphertext, newer);
       assert.equal(stored[0]?.status, "connected");
+      const kept = JSON.parse(await openSecret(stored[0]?.token_ciphertext ?? "")) as {
+        grantStatus?: string;
+        grantSource?: string;
+        grantedPermissions?: string[];
+      };
+      assert.equal(kept.grantStatus, "permissions_confirmed");
+      assert.equal(kept.grantSource, "oauth_exchange");
+      assert.deepEqual(kept.grantedPermissions, ["instagram_business_basic", "instagram_business_content_publish"]);
       await sql`update social_accounts set token_ciphertext = ${oldCipher}, status = 'connected' where id = ${"social-1"}`;
       const failed = {
         ...quietGraph(),
@@ -539,6 +565,62 @@ describe("oauth diagnostic trace", () => {
       assertNoSecrets(readOAuthTrace());
     } finally {
       clearOAuthTrace();
+      restoreEnv();
+      await db.close();
+    }
+  });
+
+  it("keeps a confirmation that finishes while refresh is still in flight", async () => {
+    const restoreEnv = useTestEnv();
+    const restoreFetch = mockCallbackFetch();
+    const { db, sql } = await createDatabase();
+    clearOAuthTrace();
+    try {
+      const oldCipher = await sealSecret(JSON.stringify({
+        v: 2,
+        userToken: "old-token",
+        igUserId: PROFESSIONAL_ID,
+        grantStatus: "permissions_unknown",
+        grantSource: "preserved_on_refresh",
+      }));
+      await seedClient(sql);
+      await sql`
+        update social_accounts
+        set status = 'connected', external_account_id = ${PROFESSIONAL_ID}, token_ciphertext = ${oldCipher}
+        where id = ${"social-1"}
+      `;
+      const pendingId = await runCallback(sql);
+      const { selectPendingAccount } = await import("./meta.server.ts");
+      const { renewInstagram } = await import("./instagram.server.ts");
+      const response = await renewInstagram(customerRequest("/api/oauth/instagram/renew"), {
+        ...quietGraph(),
+        async refresh() {
+          const selected = await selectPendingAccount(selectRequest(pendingId), sql);
+          assert.equal(selected.status, 200);
+          return { accessToken: "refreshed-token", expiresIn: 3600 };
+        },
+      }, sql);
+      const body = await response.json() as Record<string, unknown>;
+      assert.equal(response.status, 409);
+      assert.equal(body.error, "token_replaced");
+      assert.equal(body.kept, true);
+      const stored = await sql<{ token_ciphertext: string; status: string }>`select token_ciphertext, status from social_accounts where id = ${"social-1"}`;
+      assert.equal(stored[0]?.status, "connected");
+      const opened = JSON.parse(await openSecret(stored[0]?.token_ciphertext ?? "")) as {
+        userToken?: string;
+        grantStatus?: string;
+        grantSource?: string;
+        grantedPermissions?: string[];
+      };
+      assert.equal(opened.userToken, "long-lived-token");
+      assert.notEqual(opened.userToken, "refreshed-token");
+      assert.equal(opened.grantStatus, "permissions_confirmed");
+      assert.equal(opened.grantSource, "oauth_exchange");
+      assert.deepEqual(opened.grantedPermissions, ["instagram_business_basic", "instagram_business_content_publish"]);
+      assertNoSecrets(readOAuthTrace());
+    } finally {
+      clearOAuthTrace();
+      restoreFetch();
       restoreEnv();
       await db.close();
     }
