@@ -18,6 +18,7 @@ import {
   type TracePanel,
 } from "@/lib/oauth/oauth-trace-view";
 import { ApprovalActions } from "@/components/approval-actions";
+import { InstagramManualPublish } from "@/components/instagram-manual-publish";
 import { StatusPill } from "@/components/status-pill";
 import { TestClientCleanup } from "@/components/test-client-cleanup";
 
@@ -76,6 +77,7 @@ function AdminHome() {
         <h1 className="text-2xl font-semibold tracking-tight">{t("admin.clientsTitle")}</h1>
         <p className="mt-1 text-sm text-muted">{t("admin.clientsBody")}</p>
       </div>
+      <InstagramManualPublish />
 
       {error ? <p className="text-sm text-danger">{showNotice(locale, error)}</p> : null}
       {!data && !error ? <p className="text-sm text-muted">{t("admin.loadingData")}</p> : null}

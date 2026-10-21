@@ -102,6 +102,7 @@ test("product migrations are globbed and the auth source stays outside that glob
     "0004_client_approval.sql",
     "999_instagram_test_publications.sql",
     "1000_instagram_test_publication_attempts.sql",
+    "1001_instagram_manual_publications.sql",
   ]);
   assert.ok(readdirSync(join(migrationsDir, "auth")).includes("0001_auth.sql"));
   assert.equal(pending.filter((name) => name === "0001_auth.sql").length, 1);
