@@ -92,11 +92,11 @@ async function overlayQuota(items: ClientListItem[]): Promise<void> {
         sp.period_last::text as period_last,
         sp.posts_quota::int as posts_quota,
         (select count(*)::int from instagram_generation_results r
-          where r.client_id = sp.client_id and r.status = 'generated'
-            and (r.created_at at time zone 'Asia/Jerusalem')::date between sp.period_start and sp.period_last) as consumed,
+          where r.client_id = sp.client_id and r.subscription_period_id = sp.id and r.status = 'generated') as consumed,
         (select count(*)::int from publishing_jobs j
-          where j.client_id = sp.client_id and j.platform = 'instagram' and j.status = 'queued' and j.awaiting_generation is true
-            and (j.created_at at time zone 'Asia/Jerusalem')::date between sp.period_start and sp.period_last) as reserved
+          where j.client_id = sp.client_id and j.subscription_period_id = sp.id
+            and j.platform = 'instagram' and j.status = 'queued' and j.awaiting_generation is true
+            and not exists (select 1 from instagram_generation_results r where r.job_id = j.id)) as reserved
       from subscription_periods sp
       where sp.status in ('trial', 'active') and sp.client_id = any($1::text[])`,
       [items.map((item) => item.id)],
@@ -596,33 +596,46 @@ export const confirmPaidPeriod = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: unknown) => {
     if (typeof input !== "object" || input === null) throw new Error("בקשה לא תקינה");
-    const body = input as { clientId?: unknown; paymentReference?: unknown };
+    const body = input as { clientId?: unknown; paymentId?: unknown; amountIls?: unknown; currency?: unknown };
     const clientId = typeof body.clientId === "string" ? body.clientId : "";
-    const paymentReference = typeof body.paymentReference === "string" ? body.paymentReference.trim() : "";
-    if (!/^[0-9a-f-]{36}$/i.test(clientId) || paymentReference.length < 8) throw new Error("בקשה לא תקינה");
-    return { clientId, paymentReference };
+    const paymentId = typeof body.paymentId === "string" ? body.paymentId.trim() : "";
+    const amountIls = typeof body.amountIls === "number" ? body.amountIls : Number.NaN;
+    const currency = typeof body.currency === "string" ? body.currency.trim() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(clientId) || paymentId.length < 8 || !Number.isInteger(amountIls)) throw new Error("בקשה לא תקינה");
+    return { clientId, paymentId, amountIls, currency };
   })
   .handler(async ({ context, data }) => {
     await requireAdmin(context.userId);
     const { openPaidPeriod } = await import("@/lib/integrations/quota-period");
-    const opened = await openPaidPeriod(await getSql(), data.clientId, data.paymentReference);
+    const opened = await openPaidPeriod(await getSql(), data.clientId, {
+      paymentId: data.paymentId,
+      amountIls: data.amountIls,
+      currency: data.currency,
+      source: "admin_attestation",
+      confirmedBy: context.userId,
+    });
     if (!opened.ok) return { ok: false as const, code: opened.code };
-    return { ok: true as const, start: opened.start, last: opened.last };
+    return { ok: true as const, start: opened.start, last: opened.last, duplicate: opened.duplicate };
   });
 
 export const reconcilePhotoReservation = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: unknown) => {
     if (typeof input !== "object" || input === null) throw new Error("בקשה לא תקינה");
-    const body = input as { clientId?: unknown; jobId?: unknown };
+    const body = input as { clientId?: unknown; jobId?: unknown; reason?: unknown; acknowledgeSpendRisk?: unknown };
     const clientId = typeof body.clientId === "string" ? body.clientId : "";
     const jobId = typeof body.jobId === "string" ? body.jobId : "";
-    if (!/^[0-9a-f-]{36}$/i.test(clientId) || !/^[0-9a-f-]{36}$/i.test(jobId)) throw new Error("מזהה לא תקין");
-    return { clientId, jobId };
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(clientId) || !/^[0-9a-f-]{36}$/i.test(jobId) || reason.length < 8) throw new Error("מזהה לא תקין");
+    return { clientId, jobId, reason, acknowledgeSpendRisk: body.acknowledgeSpendRisk === true };
   })
   .handler(async ({ context, data }) => {
     await requireAdmin(context.userId);
     const { reconcileFailedReservation } = await import("@/lib/integrations/quota-period");
-    const result = await reconcileFailedReservation(await getSql(), data.clientId, data.jobId);
-    return { ok: result === "closed", result };
+    const result = await reconcileFailedReservation(await getSql(), data.clientId, data.jobId, {
+      actorId: context.userId,
+      reason: data.reason,
+      acknowledgeSpendRisk: data.acknowledgeSpendRisk,
+    });
+    return { ok: result.outcome === "closed", result: result.outcome, spendWarning: result.spendWarning };
   });

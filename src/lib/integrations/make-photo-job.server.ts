@@ -1,6 +1,6 @@
 import type { Sql } from "@/lib/db";
 import { parsePhotoContentType } from "@/lib/integrations/make-photo-job";
-import { releaseUnsentReservation, reservePhotoSlot } from "@/lib/integrations/quota-period";
+import { releaseUnsentReservation, reservePhotoSlot, quotaSchemaError } from "@/lib/integrations/quota-period";
 import { secretMatches } from "@/lib/oauth/meta-guards";
 
 export type PhotoJobNotice = {
@@ -68,7 +68,7 @@ export async function dispatchPhotoGeneration(notice: PhotoJobNotice): Promise<P
   }
 }
 
-type Delivery = { id: string; status: string; http_status: number | null };
+type Delivery = { id: string; status: string; http_status: number | null; dispatch_state: string | null };
 
 function uniqueViolation(error: unknown): boolean {
   return errorCode(error) === "23505";
@@ -80,7 +80,7 @@ function errorCode(error: unknown): string | undefined {
 
 async function deliveryFor(sql: Sql, jobId: string): Promise<Delivery | null> {
   const rows = await sql<Delivery>`
-    select id, status, http_status
+    select id, status, http_status, dispatch_state
     from webhook_deliveries
     where destination = ${CONTENT_DESTINATION} and detail = ${jobDetail(jobId)}
     limit 1
@@ -88,23 +88,26 @@ async function deliveryFor(sql: Sql, jobId: string): Promise<Delivery | null> {
   return rows[0] ?? null;
 }
 
-async function claimSend(sql: Sql, clientId: string, jobId: string): Promise<"send" | "sent" | "busy"> {
+/** Mark the chargeable attempt before the network call so a crash cannot retry it. */
+async function claimSend(sql: Sql, clientId: string, jobId: string): Promise<"send" | "busy"> {
   const detail = jobDetail(jobId);
   try {
     await sql`
-      insert into webhook_deliveries (id, client_id, destination, status, detail)
-      values (${crypto.randomUUID()}, ${clientId}, ${CONTENT_DESTINATION}, 'skipped', ${detail})
+      insert into webhook_deliveries (id, client_id, destination, status, detail, dispatch_state)
+      values (${crypto.randomUUID()}, ${clientId}, ${CONTENT_DESTINATION}, 'skipped', ${detail}, null)
     `;
   } catch (error) {
     if (!uniqueViolation(error)) throw error;
   }
   const claimed = await sql<{ id: string }>`
     update webhook_deliveries
-    set http_status = 0
+    set http_status = 0, dispatch_state = 'attempted_unknown'
     where destination = ${CONTENT_DESTINATION}
       and detail = ${detail}
+      and client_id = ${clientId}
       and status = 'skipped'
       and http_status is null
+      and (dispatch_state is null or dispatch_state = 'never_attempted')
     returning id
   `;
   if (claimed[0]) return "send";
@@ -118,7 +121,20 @@ async function finishSend(sql: Sql, jobId: string, result: PhotoDispatchResult):
     where destination = ${CONTENT_DESTINATION}
       and detail = ${jobDetail(jobId)}
       and http_status = 0
+      and dispatch_state = 'attempted_unknown'
   `;
+}
+
+async function recordNeverAttempted(sql: Sql, clientId: string, jobId: string): Promise<void> {
+  const detail = jobDetail(jobId);
+  try {
+    await sql`
+      insert into webhook_deliveries (id, client_id, destination, status, detail, dispatch_state)
+      values (${crypto.randomUUID()}, ${clientId}, ${CONTENT_DESTINATION}, 'skipped', ${detail}, 'never_attempted')
+    `;
+  } catch (error) {
+    if (!uniqueViolation(error)) throw error;
+  }
 }
 
 async function authenticatedClient(sql: Sql, reference: string, connectSecret: string): Promise<{ id: string; approvalStatus: string } | null> {
@@ -134,13 +150,19 @@ async function authenticatedClient(sql: Sql, reference: string, connectSecret: s
   return { id: row.id, approvalStatus: row.approval_status ?? "pending_approval" };
 }
 
-function queued(jobId: string, duplicate: boolean, make: PhotoDispatchResult["status"]): Response {
+function queued(
+  jobId: string,
+  duplicate: boolean,
+  make: PhotoDispatchResult["status"],
+  dispatchState: string | null,
+): Response {
   return json(200, {
     ok: true,
     job_id: jobId,
     status: "queued",
     duplicate,
     make,
+    dispatch_state: dispatchState,
     published: false,
   });
 }
@@ -167,14 +189,26 @@ export async function createPhotoGenerationJob(input: {
   const today = input.today ?? jerusalemToday();
   const reserved = await reservePhotoSlot(input.sql, client.id, today);
   if (!reserved.ok) return json(reserved.code === "schema_unavailable" ? 503 : 403, { ok: false, code: reserved.code });
-  return deliver(
-    input.sql,
-    client.id,
-    reserved.jobId,
-    reserved.duplicate,
-    reserved.dispatch === "send",
-    input.dispatch ?? dispatchPhotoGeneration,
-  );
+  try {
+    return await deliver(
+      input.sql,
+      client.id,
+      reserved.jobId,
+      reserved.duplicate,
+      reserved.dispatch === "send",
+      input.dispatch ?? dispatchPhotoGeneration,
+    );
+  } catch (error) {
+    if (quotaSchemaError(error)) return json(503, { ok: false, code: "schema_unavailable" });
+    throw error;
+  }
+}
+
+function preflightWebhook(): PhotoDispatchResult | null {
+  const raw = process.env.MAKE_CONTENT_WEBHOOK_URL?.trim();
+  if (!raw) return { status: "skipped", httpStatus: null, attempted: false };
+  if (!safeWebhookUrl(raw)) return { status: "failed", httpStatus: null, attempted: false };
+  return null;
 }
 
 async function deliver(
@@ -187,26 +221,40 @@ async function deliver(
 ): Promise<Response> {
   if (!shouldSend) {
     const prior = await deliveryFor(sql, jobId);
-    return queued(jobId, true, prior?.status === "failed" ? "failed" : "sent");
+    const make = prior?.status === "sent" ? "sent" : prior?.status === "failed" || prior?.dispatch_state === "attempted_unknown" ? "failed" : "skipped";
+    return queued(jobId, true, make, prior?.dispatch_state ?? null);
+  }
+  if (dispatch === dispatchPhotoGeneration) {
+    const blocked = preflightWebhook();
+    if (blocked) {
+      await recordNeverAttempted(sql, clientId, jobId);
+      await releaseUnsentReservation(sql, clientId, jobId);
+      return queued(jobId, duplicate, blocked.status, "never_attempted");
+    }
   }
   const claim = await claimSend(sql, clientId, jobId);
   if (claim !== "send") {
     const prior = await deliveryFor(sql, jobId);
-    return queued(jobId, true, prior?.status === "failed" ? "failed" : prior?.status === "sent" ? "sent" : "skipped");
+    const make = prior?.status === "sent" ? "sent" : "failed";
+    return queued(jobId, true, make, prior?.dispatch_state ?? "attempted_unknown");
   }
-  const result = await dispatch({
-    event: "content.generation_requested",
-    job_id: jobId,
-    client_id: clientId,
-    platform: "instagram",
-    content_type: "photo",
-    occurred_at: new Date().toISOString(),
-  });
+  let result: PhotoDispatchResult;
+  try {
+    result = await dispatch({
+      event: "content.generation_requested",
+      job_id: jobId,
+      client_id: clientId,
+      platform: "instagram",
+      content_type: "photo",
+      occurred_at: new Date().toISOString(),
+    });
+  } catch {
+    return queued(jobId, true, "failed", "attempted_unknown");
+  }
   if (!result.attempted) {
-    await releaseUnsentReservation(sql, clientId, jobId);
-    await finishSend(sql, jobId, result);
-    return queued(jobId, duplicate, result.status);
+    await finishSend(sql, jobId, { status: "failed", httpStatus: result.httpStatus, attempted: true });
+    return queued(jobId, true, "failed", "attempted_unknown");
   }
   await finishSend(sql, jobId, result);
-  return queued(jobId, duplicate, result.status);
+  return queued(jobId, duplicate, result.status, "attempted_unknown");
 }

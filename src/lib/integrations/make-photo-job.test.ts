@@ -103,6 +103,7 @@ async function fixture(quota = 22): Promise<Sql> {
   const root = new URL("../../../migrations/", import.meta.url);
   await db.exec(readFileSync(new URL("1002_instagram_generation_results.sql", root), "utf8"));
   await db.exec(readFileSync(new URL("1003_photo_generation_jobs.sql", root), "utf8"));
+  await db.exec(readFileSync(new URL("../../../docs/sql/1006_period_ownership_and_payments.sql", import.meta.url), "utf8"));
   await db.query("insert into subscription_plans (code, photo_posts) values ('trial', 22)");
   await db.query(
     "insert into clients (id, reference_code, approval_status, connect_secret_hash) values ($1, $2, 'approved', $3)",
@@ -127,6 +128,18 @@ function dispatchRecorder() {
       notices.push(notice);
       return { status: "sent" as const, httpStatus: 200, attempted: true };
     },
+  };
+}
+
+const adminId = "admin-user-1";
+
+function payment(paymentId = "payment-ref-1", amountIls = 600, currency = "ILS") {
+  return {
+    paymentId,
+    amountIls,
+    currency,
+    source: "admin_attestation" as const,
+    confirmedBy: adminId,
   };
 }
 
@@ -286,7 +299,25 @@ describe("photo generation lifecycle", () => {
     assert.equal((await second.json()).job_id, jobId);
     assert.equal(calls, 1);
     const { reconcileFailedReservation } = await import("@/lib/integrations/quota-period");
-    assert.equal(await reconcileFailedReservation(sql, clientId, jobId), "closed");
+    const blocked = await reconcileFailedReservation(sql, clientId, jobId, {
+      actorId: adminId,
+      reason: "timeout may have spent",
+      acknowledgeSpendRisk: false,
+    });
+    assert.equal(blocked.outcome, "spend_unknown");
+    assert.equal(blocked.spendWarning, true);
+    const closed = await reconcileFailedReservation(sql, clientId, jobId, {
+      actorId: adminId,
+      reason: "operator accepts the spend risk",
+      acknowledgeSpendRisk: true,
+    });
+    assert.equal(closed.outcome, "closed");
+    const audit = await sql<{ prior_state: string; actor_id: string; spend_warning: boolean }>`
+      select prior_state, actor_id, spend_warning from quota_reconciliations where job_id = ${jobId}
+    `;
+    assert.equal(audit[0]?.prior_state, "attempted_unknown");
+    assert.equal(audit[0]?.actor_id, adminId);
+    assert.equal(audit[0]?.spend_warning, true);
     const open = await sql<{ count: number }>`select count(*)::int as count from publishing_jobs where awaiting_generation is true`;
     assert.equal(open[0]?.count, 0);
     assert.equal(calls, 1);
@@ -348,9 +379,15 @@ describe("photo generation lifecycle", () => {
     assert.equal(recorder.notices.length, 1);
     assert.equal((await left.json()).ok && (await right.json()).ok, true);
     const { openPaidPeriod } = await import("@/lib/integrations/quota-period");
-    assert.equal((await openPaidPeriod(sql, clientId, "nope", "2026-10-26")).ok, false);
-    const paid = await openPaidPeriod(sql, clientId, "payment-ref-1", "2026-10-26");
+    assert.equal((await openPaidPeriod(sql, clientId, payment("nope"), "2026-10-26")).ok, false);
+    assert.equal((await openPaidPeriod(sql, clientId, payment("payment-ref-1", 100), "2026-10-26")).ok, false);
+    assert.equal((await openPaidPeriod(sql, clientId, payment("payment-ref-1", 600, "USD"), "2026-10-26")).ok, false);
+    assert.equal((await openPaidPeriod(sql, clientId, { ...payment(), confirmedBy: "" }, "2026-10-26")).ok, false);
+    const paid = await openPaidPeriod(sql, clientId, payment(), "2026-10-26");
     assert.equal(paid.ok, true);
+    const again = await openPaidPeriod(sql, clientId, payment(), "2026-10-27");
+    assert.equal(again.ok, true);
+    if (again.ok) assert.equal(again.duplicate, true);
     await sql`update publishing_jobs set awaiting_generation = false, status = 'failed' where client_id = ${clientId}`;
     await sql`delete from webhook_deliveries where client_id = ${clientId}`;
     const monthly = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-26", dispatch: recorder.dispatch });
@@ -382,5 +419,159 @@ describe("photo generation lifecycle", () => {
     const jobs = await sql<{ count: number }>`select count(*)::int as count from publishing_jobs`;
     assert.equal(jobs[0]?.count, 1);
     assert.equal(recorder.notices.length, 1);
+  });
+
+  it("releases a slot when Make is not contacted and does not retry after a crash", async () => {
+    const sql = await fixture();
+    const previous = process.env.MAKE_CONTENT_WEBHOOK_URL;
+    delete process.env.MAKE_CONTENT_WEBHOOK_URL;
+    let fetches = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      throw new Error("external call");
+    }) as typeof fetch;
+    try {
+      const skipped = await createPhotoGenerationJob({
+        sql,
+        reference,
+        connectSecret,
+        contentType: "photo",
+        today: "2026-10-22",
+      });
+      assert.equal((await skipped.json()).dispatch_state, "never_attempted");
+      assert.equal(fetches, 0);
+      const waiting = await sql<{ count: number }>`select count(*)::int as count from publishing_jobs where awaiting_generation is true`;
+      assert.equal(waiting[0]?.count, 0);
+    } finally {
+      globalThis.fetch = original;
+      if (previous === undefined) delete process.env.MAKE_CONTENT_WEBHOOK_URL;
+      else process.env.MAKE_CONTENT_WEBHOOK_URL = previous;
+    }
+    let calls = 0;
+    const dispatch = async () => {
+      calls += 1;
+      throw new Error("worker died after the claim");
+    };
+    const first = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-25", dispatch });
+    assert.equal((await first.json()).dispatch_state, "attempted_unknown");
+    const second = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-25", dispatch });
+    assert.equal((await second.json()).duplicate, true);
+    assert.equal(calls, 1);
+    const open = await sql<{ count: number }>`select count(*)::int as count from publishing_jobs where awaiting_generation is true`;
+    assert.equal(open[0]?.count, 1);
+  });
+
+  it("blocks the 23rd trial photo, a second free period, and keeps a late callback on the old period", async () => {
+    const sql = await fixture();
+    const recorder = dispatchRecorder();
+    const { openPaidPeriod, readQuotaView } = await import("@/lib/integrations/quota-period");
+    const created = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-22", dispatch: recorder.dispatch });
+    const jobId = (await created.json()).job_id as string;
+    const trial = (await sql<{ id: string }>`select id from subscription_periods where client_id = ${clientId} and plan_code = 'trial'`)[0];
+    assert.ok(trial);
+    const paid = await openPaidPeriod(sql, clientId, payment("payment-ref-9"), "2026-11-02");
+    assert.equal(paid.ok, true);
+    const late = await receiveMakeContentResult(callback(jobId), sql, { MAKE_CONTENT_RESULT_SECRET: callbackSecret });
+    assert.equal(late.status, 200);
+    const owned = await sql<{ subscription_period_id: string }>`select subscription_period_id from instagram_generation_results where job_id = ${jobId}`;
+    assert.equal(owned[0]?.subscription_period_id, trial.id);
+    const reserved = await sql<{ count: number }>`
+      select count(*)::int as count from publishing_jobs
+      where subscription_period_id = ${trial.id} and awaiting_generation is true
+    `;
+    assert.equal(Number(reserved[0]?.count), 0);
+    const fresh = await sql<{ id: string }>`select id from subscription_periods where client_id = ${clientId} and plan_code = 'monthly'`;
+    const newRows = await sql<{ count: number }>`select count(*)::int as count from instagram_generation_results where subscription_period_id = ${fresh[0]?.id ?? ""}`;
+    assert.equal(Number(newRows[0]?.count), 0);
+    const view = await readQuotaView(sql, clientId, "2026-11-02");
+    assert.equal(view.consumed, 0);
+    assert.equal(view.reserved, 0);
+    for (let index = 0; index < 21; index += 1) {
+      const id = crypto.randomUUID();
+      await sql.query(
+        "insert into publishing_jobs (id, client_id, platform, status, awaiting_generation, created_at, subscription_period_id) values ($1, $2, 'instagram', 'failed', false, '2026-10-22T12:00:00Z', $3)",
+        [id, clientId, trial.id],
+      );
+      await sql.query(
+        "insert into instagram_generation_results (job_id, client_id, platform, content_type, caption, image_url, status, created_at, subscription_period_id) values ($1, $2, 'instagram', 'photo', $3, 'https://cdn.example.com/p.jpg', 'generated', '2026-10-22T12:00:00Z', $4)",
+        [id, clientId, `Stored caption ${index}`, trial.id],
+      );
+    }
+    const trialRows = await sql<{ count: number }>`select count(*)::int as count from instagram_generation_results where subscription_period_id = ${trial.id}`;
+    assert.equal(Number(trialRows[0]?.count), 22);
+    await sql`update client_subscriptions set plan_code = 'trial', status = 'trial', posts_quota = 22 where client_id = ${clientId}`;
+    await sql`update subscription_periods set status = 'cancelled' where client_id = ${clientId} and plan_code = 'monthly'`;
+    const secondTrial = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-11-03", dispatch: recorder.dispatch });
+    assert.equal((await secondTrial.json()).code, "expired");
+    const history = await sql<{ status: string }>`select status from subscription_periods where id = ${trial.id}`;
+    assert.equal(history[0]?.status, "cancelled");
+    const still = await sql<{ count: number }>`select count(*)::int as count from instagram_generation_results where client_id = ${clientId}`;
+    assert.equal(Number(still[0]?.count), 22);
+  });
+
+  it("blocks the 23rd free photo", async () => {
+    const sql = await fixture();
+    const recorder = dispatchRecorder();
+    const created = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-22", dispatch: recorder.dispatch });
+    assert.equal(created.status, 200);
+    const trial = (await sql<{ id: string }>`select id from subscription_periods where client_id = ${clientId}`)[0];
+    await sql`update publishing_jobs set awaiting_generation = false, status = 'failed' where client_id = ${clientId}`;
+    await sql`delete from webhook_deliveries where client_id = ${clientId}`;
+    for (let index = 0; index < 22; index += 1) {
+      const id = crypto.randomUUID();
+      await sql.query(
+        "insert into publishing_jobs (id, client_id, platform, status, awaiting_generation, created_at, subscription_period_id) values ($1, $2, 'instagram', 'failed', false, '2026-10-22T12:00:00Z', $3)",
+        [id, clientId, trial?.id],
+      );
+      await sql.query(
+        "insert into instagram_generation_results (job_id, client_id, platform, content_type, caption, image_url, status, created_at, subscription_period_id) values ($1, $2, 'instagram', 'photo', $3, 'https://cdn.example.com/p.jpg', 'generated', '2026-10-22T12:00:00Z', $4)",
+        [id, clientId, `Free caption ${index}`, trial?.id],
+      );
+    }
+    const blocked = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-26", dispatch: recorder.dispatch });
+    assert.equal((await blocked.json()).code, "quota");
+    assert.equal(recorder.notices.length, 1);
+  });
+
+  it("blocks the third paid photo in one day and the 45th paid photo", async () => {
+    const sql = await fixture();
+    const recorder = dispatchRecorder();
+    const { openPaidPeriod } = await import("@/lib/integrations/quota-period");
+    const paid = await openPaidPeriod(sql, clientId, payment("payment-ref-8"), "2026-10-26");
+    assert.equal(paid.ok, true);
+    if (!paid.ok) return;
+    const first = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-26", dispatch: recorder.dispatch });
+    await receiveMakeContentResult(callback((await first.json()).job_id), sql, { MAKE_CONTENT_RESULT_SECRET: callbackSecret });
+    const second = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-26", dispatch: recorder.dispatch });
+    await receiveMakeContentResult(callback((await second.json()).job_id), sql, { MAKE_CONTENT_RESULT_SECRET: callbackSecret });
+    const third = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-26", dispatch: recorder.dispatch });
+    assert.equal((await third.json()).code, "daily");
+    for (let index = 0; index < 42; index += 1) {
+      const id = crypto.randomUUID();
+      await sql.query(
+        "insert into publishing_jobs (id, client_id, platform, status, awaiting_generation, created_at, subscription_period_id) values ($1, $2, 'instagram', 'failed', false, '2026-10-27T12:00:00Z', $3)",
+        [id, clientId, paid.periodId],
+      );
+      await sql.query(
+        "insert into instagram_generation_results (job_id, client_id, platform, content_type, caption, image_url, status, created_at, subscription_period_id) values ($1, $2, 'instagram', 'photo', $3, 'https://cdn.example.com/p.jpg', 'generated', '2026-10-27T12:00:00Z', $4)",
+        [id, clientId, `Paid caption ${index}`, paid.periodId],
+      );
+    }
+    const fortyFifth = await createPhotoGenerationJob({ sql, reference, connectSecret, contentType: "photo", today: "2026-10-27", dispatch: recorder.dispatch });
+    assert.equal((await fortyFifth.json()).code, "quota");
+    assert.equal(recorder.notices.length, 2);
+  });
+
+  it("does not let a client field or a status edit prove payment, and reviews do not publish", () => {
+    const admin = readFileSync(new URL("../admin.functions.ts", import.meta.url), "utf8");
+    const paidFn = admin.slice(admin.indexOf("export const confirmPaidPeriod"), admin.indexOf("export const reconcilePhotoReservation"));
+    const ops = admin.slice(admin.indexOf("async function socialsFor"), admin.indexOf("export const confirmPaidPeriod"));
+    assert.match(paidFn, /requireAdmin\(context\.userId\)/);
+    assert.match(paidFn, /confirmedBy: context\.userId/);
+    assert.doesNotMatch(paidFn, /body\.confirmedBy|confirmedBy: data/);
+    assert.doesNotMatch(ops, /openPaidPeriod/);
+    const reviews = readFileSync(new URL("./photo-review.server.ts", import.meta.url), "utf8");
+    assert.doesNotMatch(reviews, /media_publish|graph\.facebook|MAKE_CONTENT_WEBHOOK_URL/);
   });
 });
