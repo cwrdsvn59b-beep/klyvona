@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {isWorkday,postingWindow,checkQuota,paidPeriodAllowed,consumesQuota} from "./subscription-policy.ts";
+const s={plan:"trial" as const,status:"trial" as const,start:"2026-10-22",today:"2026-10-22",consumed:0,reserved:0,todayConsumed:0,todayReserved:0};
+test("Sunday-Thursday workweek",()=>{assert.equal(isWorkday("2026-10-22"),true);assert.equal(isWorkday("2026-10-23"),false);assert.equal(isWorkday("2026-10-24"),false);assert.equal(isWorkday("2026-10-25"),true)});
+test("22 workdays",()=>assert.deepEqual(postingWindow("2026-10-22"),{first:"2026-10-22",last:"2026-11-22"}));
+test("trial one daily slot",()=>{assert.equal(checkQuota(s).ok,true);assert.deepEqual(checkQuota({...s,reserved:1,todayReserved:1}),{ok:false,reason:"daily"})});
+test("total cap",()=>assert.deepEqual(checkQuota({...s,consumed:22}),{ok:false,reason:"quota"}));
+test("expired and unpaid",()=>{assert.deepEqual(checkQuota({...s,today:"2026-11-23"}),{ok:false,reason:"expired"});assert.deepEqual(checkQuota({...s,status:"cancelled"}),{ok:false,reason:"subscription"})});
+test("monthly two daily slots",()=>{const m={...s,plan:"monthly" as const,status:"active" as const,todayReserved:1,reserved:1};assert.equal(checkQuota(m).ok,true);assert.deepEqual(checkQuota({...m,todayReserved:2,reserved:2}),{ok:false,reason:"daily"})});
+test("no automatic refunds or unpaid renewal",()=>{assert.equal(consumesQuota("generated"),true);assert.equal(paidPeriodAllowed(false),false)});
