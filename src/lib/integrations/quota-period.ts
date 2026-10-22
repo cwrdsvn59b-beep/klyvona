@@ -52,7 +52,15 @@ export type ReconcileAudit = {
   acknowledgeSpendRisk: boolean;
 };
 
-export type ReconcileOutcome = "closed" | "kept" | "missing" | "spend_unknown" | "invalid";
+export type ReconcileOutcome =
+  | "closed"
+  | "kept"
+  | "missing"
+  | "spend_unknown"
+  | "pending_decision"
+  | "legacy_unclassified"
+  | "invalid"
+  | "schema_unavailable";
 
 const PAYMENT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 const ACTOR_ID = /^[A-Za-z0-9:_-]{1,80}$/;
@@ -190,8 +198,6 @@ export type Reservation =
   | { ok: true; jobId: string; duplicate: boolean; dispatch: "send" | "held" }
   | { ok: false; code: QuotaCode };
 
-const CHARGEABLE_STATES = new Set<DispatchState>(["attempted_unknown", "confirmed_not_started", "confirmed_generated"]);
-
 /**
  * Lock the client subscription and open period, then insert at most one
  * in-flight Instagram photo job bound to that period. The caller dispatches
@@ -205,22 +211,24 @@ export async function reservePhotoSlot(sql: Sql, clientId: string, today: string
       `)[0] ?? null;
       if (!subscription) return { ok: false, code: "not_entitled" };
 
-      const open = await tx<{ id: string }>`
-        select id from publishing_jobs
+      const open = await tx<{ id: string; subscription_period_id: string | null }>`
+        select id, subscription_period_id from publishing_jobs
         where client_id = ${clientId} and platform = 'instagram' and status = 'queued' and awaiting_generation is true
         limit 1
       `;
       if (open[0]) {
+        if (!open[0].subscription_period_id) {
+          return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "held" };
+        }
         const delivery = (await tx<{ dispatch_state: DispatchState | null }>`
           select dispatch_state from webhook_deliveries
           where client_id = ${clientId} and destination = 'make-content' and detail = ${`job:${open[0].id}`}
           limit 1
         `)[0] ?? null;
-        const state = delivery?.dispatch_state ?? null;
-        if (state && CHARGEABLE_STATES.has(state)) {
-          return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "held" };
+        if (!delivery || delivery.dispatch_state === "never_attempted") {
+          return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "send" };
         }
-        return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "send" };
+        return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "held" };
       }
 
       let period = (await tx<PeriodRow>`
@@ -328,7 +336,9 @@ export async function acceptGeneratedPhoto(
       if (!job) return { ok: false, code: "not_found" };
       if (job.client_id !== input.clientId) return { ok: false, code: "mismatch" };
       if (job.approval_status !== "approved") return { ok: false, code: "not_entitled" };
-      if ((job.platform !== null && job.platform !== "instagram") || job.status !== "queued") return { ok: false, code: "not_awaiting" };
+      if ((job.platform !== null && job.platform !== "instagram") || (job.status !== "queued" && job.status !== "failed")) {
+        return { ok: false, code: "not_awaiting" };
+      }
       if (!job.subscription_period_id) return { ok: false, code: "not_entitled" };
       const period = (await tx<PeriodRow>`
         select id, plan_code, status, period_start::text as period_start, period_last::text as period_last,
@@ -351,7 +361,7 @@ export async function acceptGeneratedPhoto(
         select j.id, j.client_id, 'instagram', 'photo', ${input.caption}, ${input.imageUrl}, 'generated', j.created_at, j.subscription_period_id
         from publishing_jobs j
         join clients c on c.id = j.client_id
-        where j.id = ${input.jobId} and j.client_id = ${input.clientId} and j.status = 'queued'
+        where j.id = ${input.jobId} and j.client_id = ${input.clientId} and j.status in ('queued', 'failed')
           and j.subscription_period_id = ${period.id}
           and c.approval_status = 'approved'
           and not exists (select 1 from instagram_generation_results existing where existing.job_id = j.id)
@@ -393,8 +403,9 @@ export async function releaseUnsentReservation(sql: Sql, clientId: string, jobId
 }
 
 /**
- * Close a slot without calling Make. An unknown dispatch stays closed only
- * when an authenticated admin records the risk. It never starts a replacement.
+ * Separate three decisions that must not be collapsed:
+ * close the operational retry, release the client's quota, and confirm spend.
+ * Unknown Make spend stays reserved. Compensation is not invented here.
  */
 export async function reconcileFailedReservation(
   sql: Sql,
@@ -407,13 +418,14 @@ export async function reconcileFailedReservation(
   }
   try {
     return await sql.transaction(async (tx) => {
-      const job = (await tx<{ id: string }>`
-        select id from publishing_jobs
+      const job = (await tx<{ id: string; subscription_period_id: string | null }>`
+        select id, subscription_period_id from publishing_jobs
         where id = ${jobId} and client_id = ${clientId}
         limit 1
         for update
       `)[0] ?? null;
       if (!job) return { outcome: "missing", spendWarning: false };
+      if (!job.subscription_period_id) return { outcome: "legacy_unclassified", spendWarning: true };
       const result = (await tx<{ job_id: string }>`
         select job_id from instagram_generation_results where job_id = ${jobId} and client_id = ${clientId} limit 1
       `)[0] ?? null;
@@ -425,35 +437,53 @@ export async function reconcileFailedReservation(
       `)[0] ?? null;
       const prior = delivery?.dispatch_state ?? "never_attempted";
       if (prior === "confirmed_generated") return { outcome: "kept", spendWarning: false };
-      const unknown = prior === "attempted_unknown" || prior === "confirmed_not_started";
-      if (unknown && !audit.acknowledgeSpendRisk) return { outcome: "spend_unknown", spendWarning: true };
+      if (delivery && prior !== "never_attempted") {
+        if (!audit.acknowledgeSpendRisk) return { outcome: "spend_unknown", spendWarning: true };
+        const recorded = (await tx<{ id: string }>`
+          select id from quota_reconciliations
+          where client_id = ${clientId} and job_id = ${jobId} and outcome = 'pending_decision'
+          limit 1
+        `)[0] ?? null;
+        if (!recorded) {
+          await tx`
+            insert into quota_reconciliations (
+              id, client_id, job_id, actor_id, reason, prior_state, outcome, spend_warning
+            ) values (
+              ${crypto.randomUUID()}, ${clientId}, ${jobId}, ${audit.actorId}, ${audit.reason.trim()},
+              ${prior ?? "unknown"}, 'pending_decision', true
+            )
+          `;
+        }
+        return { outcome: "pending_decision", spendWarning: true };
+      }
       const updated = await tx<{ id: string }>`
         update publishing_jobs
         set awaiting_generation = false, status = 'failed', error_message = 'reconciled_no_regeneration'
         where id = ${jobId} and client_id = ${clientId} and status = 'queued' and awaiting_generation is true
+          and subscription_period_id = ${job.subscription_period_id}
           and not exists (select 1 from instagram_generation_results r where r.job_id = publishing_jobs.id)
         returning id
       `;
-      if (!updated[0]) return { outcome: "missing", spendWarning: unknown };
+      if (!updated[0]) return { outcome: "missing", spendWarning: false };
       await tx`
         insert into quota_reconciliations (
           id, client_id, job_id, actor_id, reason, prior_state, outcome, spend_warning
         ) values (
           ${crypto.randomUUID()}, ${clientId}, ${jobId}, ${audit.actorId}, ${audit.reason.trim()},
-          ${prior}, 'closed', ${unknown}
+          ${prior}, 'closed', false
         )
       `;
-      return { outcome: "closed", spendWarning: unknown };
+      return { outcome: "closed", spendWarning: false };
     });
   } catch (error) {
-    if (quotaSchemaError(error)) return { outcome: "missing", spendWarning: false };
+    if (quotaSchemaError(error)) return { outcome: "schema_unavailable", spendWarning: false };
     throw error;
   }
 }
 
 export type PaidPeriodResult =
   | { ok: true; start: string; last: string; duplicate: boolean; periodId: string }
-  | { ok: false; code: "invalid" | "not_found" | "conflict" | "schema_unavailable" };
+  | { ok: false; code: "invalid" | "not_found" | "conflict" | "renewal_blocked" | "schema_unavailable" };
 
 /**
  * Open one monthly period from verified server-side evidence.
@@ -482,9 +512,10 @@ export async function openPaidPeriod(
         for update
       `)[0] ?? null;
       if (existing) {
-        if (existing.client_id !== clientId || existing.amount_ils !== RULES.monthly.priceIls || existing.currency !== "ILS" || !existing.period_id) {
+        if (existing.client_id !== clientId || existing.amount_ils !== RULES.monthly.priceIls || existing.currency !== "ILS") {
           return { ok: false, code: "conflict" };
         }
+        if (!existing.period_id) return { ok: false, code: "renewal_blocked" };
         const period = (await tx<{ period_start: string; period_last: string }>`
           select period_start::text as period_start, period_last::text as period_last
           from subscription_periods
@@ -500,20 +531,30 @@ export async function openPaidPeriod(
           periodId: existing.period_id,
         };
       }
+      const openMonthly = (await tx<{ id: string }>`
+        select id from subscription_periods
+        where client_id = ${clientId} and plan_code = 'monthly' and status = 'active'
+        limit 1
+        for update
+      `)[0] ?? null;
+      if (openMonthly) {
+        await tx`
+          insert into payment_confirmations (
+            id, payment_id, client_id, amount_ils, currency, source, confirmed_by, period_id, note
+          ) values (
+            ${crypto.randomUUID()}, ${evidence.paymentId}, ${clientId}, ${evidence.amountIls}, ${evidence.currency},
+            ${evidence.source}, ${evidence.confirmedBy}, null,
+            ${"recorded_without_period"}
+          )
+        `;
+        return { ok: false, code: "renewal_blocked" };
+      }
       const periodId = crypto.randomUUID();
       const confirmationId = crypto.randomUUID();
       await tx`
-        insert into payment_confirmations (
-          id, payment_id, client_id, amount_ils, currency, source, confirmed_by, period_id
-        ) values (
-          ${confirmationId}, ${evidence.paymentId}, ${clientId}, ${evidence.amountIls}, ${evidence.currency},
-          ${evidence.source}, ${evidence.confirmedBy}, ${periodId}
-        )
-      `;
-      await tx`
         update subscription_periods
         set status = 'cancelled'
-        where client_id = ${clientId} and status in ('trial', 'active')
+        where client_id = ${clientId} and status = 'trial'
       `;
       await tx`
         update client_subscriptions
@@ -526,6 +567,14 @@ export async function openPaidPeriod(
         ) values (
           ${periodId}, ${clientId}, 'monthly', 'active', ${window.first}, ${window.last},
           ${RULES.monthly.total}, ${RULES.monthly.daily}, ${evidence.paymentId}
+        )
+      `;
+      await tx`
+        insert into payment_confirmations (
+          id, payment_id, client_id, amount_ils, currency, source, confirmed_by, period_id
+        ) values (
+          ${confirmationId}, ${evidence.paymentId}, ${clientId}, ${evidence.amountIls}, ${evidence.currency},
+          ${evidence.source}, ${evidence.confirmedBy}, ${periodId}
         )
       `;
       return { ok: true, start: window.first, last: window.last, duplicate: false, periodId };
