@@ -167,6 +167,21 @@ function queued(
   });
 }
 
+async function releaseIfUnclaimed(sql: Sql, clientId: string, jobId: string): Promise<void> {
+  await sql`
+    update publishing_jobs
+    set awaiting_generation = false, status = 'failed', error_message = 'schema_unavailable'
+    where id = ${jobId} and client_id = ${clientId} and awaiting_generation is true
+      and not exists (
+        select 1 from webhook_deliveries d
+        where d.client_id = ${clientId}
+          and d.destination = ${CONTENT_DESTINATION}
+          and d.detail = ${jobDetail(jobId)}
+      )
+      and not exists (select 1 from instagram_generation_results r where r.job_id = publishing_jobs.id)
+  `;
+}
+
 /**
  * Open one queued Instagram photo job for the authenticated client, then ask
  * Make to generate it. A repeat reuses that job and does not spend another slot.
@@ -199,7 +214,14 @@ export async function createPhotoGenerationJob(input: {
       input.dispatch ?? dispatchPhotoGeneration,
     );
   } catch (error) {
-    if (quotaSchemaError(error)) return json(503, { ok: false, code: "schema_unavailable" });
+    if (quotaSchemaError(error)) {
+      try {
+        await releaseIfUnclaimed(input.sql, client.id, reserved.jobId);
+      } catch {
+        // The delivery table may be missing too. Do not turn that into a second send.
+      }
+      return json(503, { ok: false, code: "schema_unavailable" });
+    }
     throw error;
   }
 }

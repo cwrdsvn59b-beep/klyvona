@@ -133,6 +133,21 @@ function dispatchRecorder() {
 
 const adminId = "admin-user-1";
 
+function hideDispatchColumn(inner: Sql): Sql {
+  const wrap = (sql: Sql): Sql => {
+    const tagged = (async <T>(strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (strings.join("").includes("dispatch_state")) {
+        throw Object.assign(new Error("undefined_column"), { code: "42703" });
+      }
+      return sql(strings, ...values);
+    }) as Sql;
+    tagged.query = sql.query.bind(sql);
+    tagged.transaction = (run) => sql.transaction((tx) => run(wrap(tx)));
+    return tagged;
+  };
+  return wrap(inner);
+}
+
 function payment(paymentId = "payment-ref-1", amountIls = 600, currency = "ILS") {
   return {
     paymentId,
@@ -678,5 +693,34 @@ describe("photo generation lifecycle", () => {
     assert.equal((await fridayCall.json()).code, "weekend");
     const opened = await friday<{ count: number }>`select count(*)::int as count from subscription_periods`;
     assert.equal(Number(opened[0]?.count), 0);
+  });
+
+  it("drops an unsent reservation when the dispatch column is missing and does not call Make", async () => {
+    const sql = await fixture();
+    const wrapped = hideDispatchColumn(sql);
+    let fetches = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      throw new Error("external call");
+    }) as typeof fetch;
+    try {
+      const response = await createPhotoGenerationJob({
+        sql: wrapped,
+        reference,
+        connectSecret,
+        contentType: "photo",
+        today: "2026-10-22",
+      });
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).code, "schema_unavailable");
+      assert.equal(fetches, 0);
+    } finally {
+      globalThis.fetch = original;
+    }
+    const waiting = await sql<{ count: number }>`select count(*)::int as count from publishing_jobs where awaiting_generation is true`;
+    assert.equal(Number(waiting[0]?.count), 0);
+    const deliveries = await sql<{ count: number }>`select count(*)::int as count from webhook_deliveries`;
+    assert.equal(Number(deliveries[0]?.count), 0);
   });
 });
