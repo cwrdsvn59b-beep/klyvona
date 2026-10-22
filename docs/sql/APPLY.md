@@ -1,5 +1,7 @@
 # Pending SQL — not applied
 
+The launch steps, support questions and rollback rule are in [docs/PRODUCTION-LAUNCH-RUNBOOK.md](../PRODUCTION-LAUNCH-RUNBOOK.md). Do not apply this directory before that runbook's identification step.
+
 Do not copy these files into `migrations/`. `npm run build` runs `db:migrate`, which reads only that directory.
 
 Production Neon is not identified until T-I7024 answers. Do not run this plan there.
