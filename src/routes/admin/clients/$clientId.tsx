@@ -38,6 +38,8 @@ function ClientPage() {
   const [saved, setSaved] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [paymentReference, setPaymentReference] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("600");
+  const [reconcileReason, setReconcileReason] = useState("");
 
   useEffect(() => {
     if (!user?.id) return;
@@ -153,6 +155,7 @@ function ClientPage() {
                 />
               </div>
               <p className="mt-3 text-sm text-muted">{t("admin.videoExcluded")}</p>
+              <p className="mt-3 text-sm text-muted">{t("admin.paidDisclaimer")}</p>
               <label className="mt-4 block text-sm">
                 {t("admin.paidReference")}
                 <input
@@ -161,11 +164,27 @@ function ClientPage() {
                   onChange={(event) => setPaymentReference(event.target.value)}
                 />
               </label>
+              <label className="mt-3 block text-sm">
+                {t("admin.paidAmount")}
+                <input
+                  className="mt-1 w-full rounded-xl border border-line bg-bg px-3 py-2"
+                  inputMode="numeric"
+                  value={paymentAmount}
+                  onChange={(event) => setPaymentAmount(event.target.value)}
+                />
+              </label>
               <Button
                 className="mt-3"
                 variant="secondary"
                 onClick={() => {
-                  void confirmPaidPeriod({ data: { clientId: profile.id, paymentReference } }).then((result) => {
+                  void confirmPaidPeriod({
+                    data: {
+                      clientId: profile.id,
+                      paymentId: paymentReference,
+                      amountIls: Number(paymentAmount),
+                      currency: "ILS",
+                    },
+                  }).then((result) => {
                     setSaved(result.ok ? "admin.saved" : "admin.saveFailed");
                     if (result.ok) setRefreshKey((value) => value + 1);
                   });
@@ -267,6 +286,15 @@ function ClientPage() {
 
           <section className="rounded-2xl bg-surface p-4 shadow-card">
             <h2 className="font-semibold">{t("admin.jobs")}</h2>
+            <p className="mt-2 text-sm text-muted">{t("admin.spendWarning")}</p>
+            <label className="mt-3 block text-sm">
+              {t("admin.reconcileReason")}
+              <input
+                className="mt-1 w-full rounded-xl border border-line bg-bg px-3 py-2"
+                value={reconcileReason}
+                onChange={(event) => setReconcileReason(event.target.value)}
+              />
+            </label>
             {profile.jobs.length === 0 ? (
               <p className="mt-2 text-sm text-muted">{t("admin.noJobs")}</p>
             ) : (
@@ -279,7 +307,14 @@ function ClientPage() {
                         <Button
                           variant="secondary"
                           onClick={() => {
-                            void reconcilePhotoReservation({ data: { clientId: profile.id, jobId: job.id } }).then(() => {
+                            void reconcilePhotoReservation({
+                              data: {
+                                clientId: profile.id,
+                                jobId: job.id,
+                                reason: reconcileReason,
+                                acknowledgeSpendRisk: true,
+                              },
+                            }).then(() => {
                               setRefreshKey((value) => value + 1);
                             });
                           }}

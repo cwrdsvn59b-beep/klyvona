@@ -12,6 +12,8 @@ import {
 
 export type QuotaCode = "schema_unavailable" | "not_entitled" | "not_connected" | "weekend" | "expired" | "quota" | "daily" | "subscription" | "invalid";
 
+export type DispatchState = "never_attempted" | "attempted_unknown" | "confirmed_not_started" | "confirmed_generated";
+
 export type QuotaView = {
   ledger: "period" | "unopened" | "unavailable";
   consumed: number;
@@ -35,7 +37,25 @@ type PeriodRow = {
 
 type CountRow = { consumed: number; reserved: number; today_consumed: number; today_reserved: number };
 
-const PAYMENT_REFERENCE = /^[A-Za-z0-9_-]{8,80}$/;
+/** Server-built attestation. A client-supplied string is not this type. */
+export type PaymentEvidence = {
+  paymentId: string;
+  amountIls: number;
+  currency: string;
+  source: "admin_attestation";
+  confirmedBy: string;
+};
+
+export type ReconcileAudit = {
+  actorId: string;
+  reason: string;
+  acknowledgeSpendRisk: boolean;
+};
+
+export type ReconcileOutcome = "closed" | "kept" | "missing" | "spend_unknown" | "invalid";
+
+const PAYMENT_ID = /^[A-Za-z0-9_-]{8,80}$/;
+const ACTOR_ID = /^[A-Za-z0-9:_-]{1,80}$/;
 
 export function jerusalemToday(now = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -72,20 +92,44 @@ function emptyView(ledger: QuotaView["ledger"]): QuotaView {
   };
 }
 
-async function counts(sql: Sql, clientId: string, start: string, last: string, today: string): Promise<CountRow> {
+/**
+ * Manual admin attestation is not a payment-provider settlement.
+ * Amount, currency, and a server-authenticated actor are required.
+ */
+export function paymentEvidenceAccepted(evidence: PaymentEvidence): boolean {
+  if (!paidPeriodAllowed(evidence.source === "admin_attestation")) return false;
+  return evidence.currency === "ILS"
+    && evidence.amountIls === RULES.monthly.priceIls
+    && PAYMENT_ID.test(evidence.paymentId)
+    && ACTOR_ID.test(evidence.confirmedBy);
+}
+
+async function counts(sql: Sql, clientId: string, periodId: string, today: string): Promise<CountRow> {
   const rows = await sql<CountRow>`
     select
       (select count(*)::int from instagram_generation_results r
-        where r.client_id = ${clientId} and r.status = 'generated'
-          and (r.created_at at time zone 'Asia/Jerusalem')::date between ${start}::date and ${last}::date) as consumed,
+        where r.client_id = ${clientId}
+          and r.subscription_period_id = ${periodId}
+          and r.status = 'generated') as consumed,
       (select count(*)::int from publishing_jobs j
-        where j.client_id = ${clientId} and j.platform = 'instagram' and j.status = 'queued' and j.awaiting_generation is true
-          and (j.created_at at time zone 'Asia/Jerusalem')::date between ${start}::date and ${last}::date) as reserved,
+        where j.client_id = ${clientId}
+          and j.subscription_period_id = ${periodId}
+          and j.platform = 'instagram'
+          and j.status = 'queued'
+          and j.awaiting_generation is true
+          and not exists (select 1 from instagram_generation_results r where r.job_id = j.id)) as reserved,
       (select count(*)::int from instagram_generation_results r
-        where r.client_id = ${clientId} and r.status = 'generated'
+        where r.client_id = ${clientId}
+          and r.subscription_period_id = ${periodId}
+          and r.status = 'generated'
           and (r.created_at at time zone 'Asia/Jerusalem')::date = ${today}::date) as today_consumed,
       (select count(*)::int from publishing_jobs j
-        where j.client_id = ${clientId} and j.platform = 'instagram' and j.status = 'queued' and j.awaiting_generation is true
+        where j.client_id = ${clientId}
+          and j.subscription_period_id = ${periodId}
+          and j.platform = 'instagram'
+          and j.status = 'queued'
+          and j.awaiting_generation is true
+          and not exists (select 1 from instagram_generation_results r where r.job_id = j.id)
           and (j.created_at at time zone 'Asia/Jerusalem')::date = ${today}::date) as today_reserved
   `;
   const row = rows[0];
@@ -124,7 +168,7 @@ export async function readQuotaView(sql: Sql, clientId: string, today = jerusale
       limit 1
     `)[0] ?? null;
     if (!period) return { ...emptyView("unopened"), available: 0 };
-    const tally = await counts(sql, clientId, period.period_start, period.period_last, today);
+    const tally = await counts(sql, clientId, period.id, today);
     const available = Math.max(0, Number(period.posts_quota) - tally.consumed - tally.reserved);
     return {
       ledger: "period",
@@ -146,10 +190,12 @@ export type Reservation =
   | { ok: true; jobId: string; duplicate: boolean; dispatch: "send" | "held" }
   | { ok: false; code: QuotaCode };
 
+const CHARGEABLE_STATES = new Set<DispatchState>(["attempted_unknown", "confirmed_not_started", "confirmed_generated"]);
+
 /**
  * Lock the client subscription and open period, then insert at most one
- * in-flight Instagram photo job. The caller dispatches Make only when
- * `dispatch` is `send`.
+ * in-flight Instagram photo job bound to that period. The caller dispatches
+ * Make only when `dispatch` is `send` and the delivery row is still unclaimed.
  */
 export async function reservePhotoSlot(sql: Sql, clientId: string, today: string): Promise<Reservation> {
   try {
@@ -164,7 +210,18 @@ export async function reservePhotoSlot(sql: Sql, clientId: string, today: string
         where client_id = ${clientId} and platform = 'instagram' and status = 'queued' and awaiting_generation is true
         limit 1
       `;
-      if (open[0]) return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "held" };
+      if (open[0]) {
+        const delivery = (await tx<{ dispatch_state: DispatchState | null }>`
+          select dispatch_state from webhook_deliveries
+          where client_id = ${clientId} and destination = 'make-content' and detail = ${`job:${open[0].id}`}
+          limit 1
+        `)[0] ?? null;
+        const state = delivery?.dispatch_state ?? null;
+        if (state && CHARGEABLE_STATES.has(state)) {
+          return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "held" };
+        }
+        return { ok: true, jobId: open[0].id, duplicate: true, dispatch: "send" };
+      }
 
       let period = (await tx<PeriodRow>`
         select id, plan_code, status, period_start::text as period_start, period_last::text as period_last,
@@ -210,7 +267,7 @@ export async function reservePhotoSlot(sql: Sql, clientId: string, today: string
       }
 
       if (!subscriptionEntitled(subscription.plan_code, subscription.status)) return { ok: false, code: "not_entitled" };
-      const tally = await counts(tx, clientId, period.period_start, period.period_last, today);
+      const tally = await counts(tx, clientId, period.id, today);
       if (tally.consumed + tally.reserved >= Number(period.posts_quota)) return { ok: false, code: "quota" };
       if (tally.today_consumed + tally.today_reserved >= Number(period.daily_quota)) return { ok: false, code: "daily" };
       const decision = decisionFor(period, tally, today);
@@ -223,8 +280,11 @@ export async function reservePhotoSlot(sql: Sql, clientId: string, today: string
 
       const jobId = crypto.randomUUID();
       await tx`
-        insert into publishing_jobs (id, client_id, platform, status, awaiting_generation, created_at)
-        values (${jobId}, ${clientId}, 'instagram', 'queued', true, ${`${today}T12:00:00Z`})
+        insert into publishing_jobs (
+          id, client_id, platform, status, awaiting_generation, created_at, subscription_period_id
+        ) values (
+          ${jobId}, ${clientId}, 'instagram', 'queued', true, ${`${today}T12:00:00Z`}, ${period.id}
+        )
       `;
       return { ok: true, jobId, duplicate: false, dispatch: "send" };
     });
@@ -241,23 +301,24 @@ export async function reservePhotoSlot(sql: Sql, clientId: string, today: string
   }
 }
 
-/** Store a callback only for this client's own reserved or still-under-cap job. `posts_used` is ignored. */
+/** Store a callback on the job's own period. `posts_used` and the current open period are ignored. */
 export async function acceptGeneratedPhoto(
   sql: Sql,
   input: { jobId: string; clientId: string; caption: string; imageUrl: string },
 ): Promise<{ ok: true; duplicate: boolean } | { ok: false; code: "not_found" | "mismatch" | "not_awaiting" | "not_entitled" | "conflict" | "schema_unavailable" }> {
   try {
     return await sql.transaction(async (tx) => {
-      const existing = (await tx<{ client_id: string; caption: string; image_url: string; status: string }>`
-        select client_id, caption, image_url, status from instagram_generation_results where job_id = ${input.jobId} limit 1
+      const existing = (await tx<{ client_id: string; caption: string; image_url: string; status: string; subscription_period_id: string | null }>`
+        select client_id, caption, image_url, status, subscription_period_id
+        from instagram_generation_results where job_id = ${input.jobId} limit 1
       `)[0] ?? null;
       if (existing) {
         if (existing.client_id !== input.clientId) return { ok: false, code: "mismatch" };
         const same = existing.caption === input.caption && existing.image_url === input.imageUrl && existing.status === "generated";
         return same ? { ok: true, duplicate: true } : { ok: false, code: "conflict" };
       }
-      const job = (await tx<{ client_id: string; status: string; platform: string | null; approval_status: string; awaiting_generation: boolean | null }>`
-        select j.client_id, j.status, j.platform, c.approval_status, j.awaiting_generation
+      const job = (await tx<{ client_id: string; status: string; platform: string | null; approval_status: string; awaiting_generation: boolean | null; subscription_period_id: string | null }>`
+        select j.client_id, j.status, j.platform, c.approval_status, j.awaiting_generation, j.subscription_period_id
         from publishing_jobs j
         join clients c on c.id = j.client_id
         where j.id = ${input.jobId}
@@ -268,28 +329,30 @@ export async function acceptGeneratedPhoto(
       if (job.client_id !== input.clientId) return { ok: false, code: "mismatch" };
       if (job.approval_status !== "approved") return { ok: false, code: "not_entitled" };
       if ((job.platform !== null && job.platform !== "instagram") || job.status !== "queued") return { ok: false, code: "not_awaiting" };
+      if (!job.subscription_period_id) return { ok: false, code: "not_entitled" };
       const period = (await tx<PeriodRow>`
         select id, plan_code, status, period_start::text as period_start, period_last::text as period_last,
           posts_quota::int as posts_quota, daily_quota::int as daily_quota
         from subscription_periods
-        where client_id = ${input.clientId} and status in ('trial', 'active')
+        where id = ${job.subscription_period_id} and client_id = ${input.clientId}
         limit 1
         for update
       `)[0] ?? null;
       if (!period) return { ok: false, code: "not_entitled" };
       const used = Number((await tx<{ consumed: number }>`
         select count(*)::int as consumed from instagram_generation_results
-        where client_id = ${input.clientId} and status = 'generated'
-          and (created_at at time zone 'Asia/Jerusalem')::date between ${period.period_start}::date and ${period.period_last}::date
+        where client_id = ${input.clientId} and subscription_period_id = ${period.id} and status = 'generated'
       `)[0]?.consumed ?? 0);
-      const reserved = job.awaiting_generation === true;
-      if (!reserved && used >= Number(period.posts_quota)) return { ok: false, code: "not_entitled" };
+      if (job.awaiting_generation !== true && used >= Number(period.posts_quota)) return { ok: false, code: "not_entitled" };
       const inserted = await tx<{ job_id: string }>`
-        insert into instagram_generation_results (job_id, client_id, platform, content_type, caption, image_url, status, created_at)
-        select j.id, j.client_id, 'instagram', 'photo', ${input.caption}, ${input.imageUrl}, 'generated', j.created_at
+        insert into instagram_generation_results (
+          job_id, client_id, platform, content_type, caption, image_url, status, created_at, subscription_period_id
+        )
+        select j.id, j.client_id, 'instagram', 'photo', ${input.caption}, ${input.imageUrl}, 'generated', j.created_at, j.subscription_period_id
         from publishing_jobs j
         join clients c on c.id = j.client_id
         where j.id = ${input.jobId} and j.client_id = ${input.clientId} and j.status = 'queued'
+          and j.subscription_period_id = ${period.id}
           and c.approval_status = 'approved'
           and not exists (select 1 from instagram_generation_results existing where existing.job_id = j.id)
         on conflict (job_id) do nothing
@@ -298,7 +361,12 @@ export async function acceptGeneratedPhoto(
       if (!inserted[0]) return { ok: false, code: "conflict" };
       await tx`
         update publishing_jobs set awaiting_generation = false
-        where id = ${input.jobId} and client_id = ${input.clientId} and awaiting_generation is true
+        where id = ${input.jobId} and client_id = ${input.clientId} and subscription_period_id = ${period.id}
+      `;
+      await tx`
+        update webhook_deliveries
+        set dispatch_state = 'confirmed_generated', status = 'sent'
+        where client_id = ${input.clientId} and destination = 'make-content' and detail = ${`job:${input.jobId}`}
       `;
       return { ok: true, duplicate: false };
     });
@@ -314,40 +382,90 @@ export async function releaseUnsentReservation(sql: Sql, clientId: string, jobId
     set awaiting_generation = false, status = 'failed', error_message = 'dispatch_not_attempted'
     where id = ${jobId} and client_id = ${clientId} and awaiting_generation is true
       and not exists (select 1 from instagram_generation_results r where r.job_id = publishing_jobs.id)
+      and not exists (
+        select 1 from webhook_deliveries d
+        where d.client_id = ${clientId}
+          and d.destination = 'make-content'
+          and d.detail = ${`job:${jobId}`}
+          and d.dispatch_state in ('attempted_unknown', 'confirmed_generated', 'confirmed_not_started')
+      )
   `;
 }
 
-/** Close a failed dispatch slot. Does not call Make and does not open a replacement. */
-export async function reconcileFailedReservation(sql: Sql, clientId: string, jobId: string): Promise<"closed" | "kept" | "missing"> {
-  const delivery = (await sql<{ status: string }>`
-    select status from webhook_deliveries
-    where client_id = ${clientId} and destination = 'make-content' and detail = ${`job:${jobId}`}
-    limit 1
-  `)[0] ?? null;
-  if (delivery?.status === "sent") return "kept";
-  const updated = await sql<{ id: string }>`
-    update publishing_jobs
-    set awaiting_generation = false, status = 'failed', error_message = 'reconciled_no_regeneration'
-    where id = ${jobId} and client_id = ${clientId} and status = 'queued' and awaiting_generation is true
-      and not exists (select 1 from instagram_generation_results r where r.job_id = publishing_jobs.id)
-    returning id
-  `;
-  if (!updated[0]) return "missing";
-  await sql`
-    insert into onboarding_events (id, client_id, step, status, detail)
-    values (${crypto.randomUUID()}, ${clientId}, 'quota', 'reconciled', ${`job:${jobId}`})
-  `;
-  return "closed";
+/**
+ * Close a slot without calling Make. An unknown dispatch stays closed only
+ * when an authenticated admin records the risk. It never starts a replacement.
+ */
+export async function reconcileFailedReservation(
+  sql: Sql,
+  clientId: string,
+  jobId: string,
+  audit: ReconcileAudit,
+): Promise<{ outcome: ReconcileOutcome; spendWarning: boolean }> {
+  if (!ACTOR_ID.test(audit.actorId) || audit.reason.trim().length < 8) {
+    return { outcome: "invalid", spendWarning: false };
+  }
+  try {
+    return await sql.transaction(async (tx) => {
+      const job = (await tx<{ id: string }>`
+        select id from publishing_jobs
+        where id = ${jobId} and client_id = ${clientId}
+        limit 1
+        for update
+      `)[0] ?? null;
+      if (!job) return { outcome: "missing", spendWarning: false };
+      const result = (await tx<{ job_id: string }>`
+        select job_id from instagram_generation_results where job_id = ${jobId} and client_id = ${clientId} limit 1
+      `)[0] ?? null;
+      if (result) return { outcome: "kept", spendWarning: false };
+      const delivery = (await tx<{ dispatch_state: DispatchState | null; status: string }>`
+        select dispatch_state, status from webhook_deliveries
+        where client_id = ${clientId} and destination = 'make-content' and detail = ${`job:${jobId}`}
+        limit 1
+      `)[0] ?? null;
+      const prior = delivery?.dispatch_state ?? "never_attempted";
+      if (prior === "confirmed_generated") return { outcome: "kept", spendWarning: false };
+      const unknown = prior === "attempted_unknown" || prior === "confirmed_not_started";
+      if (unknown && !audit.acknowledgeSpendRisk) return { outcome: "spend_unknown", spendWarning: true };
+      const updated = await tx<{ id: string }>`
+        update publishing_jobs
+        set awaiting_generation = false, status = 'failed', error_message = 'reconciled_no_regeneration'
+        where id = ${jobId} and client_id = ${clientId} and status = 'queued' and awaiting_generation is true
+          and not exists (select 1 from instagram_generation_results r where r.job_id = publishing_jobs.id)
+        returning id
+      `;
+      if (!updated[0]) return { outcome: "missing", spendWarning: unknown };
+      await tx`
+        insert into quota_reconciliations (
+          id, client_id, job_id, actor_id, reason, prior_state, outcome, spend_warning
+        ) values (
+          ${crypto.randomUUID()}, ${clientId}, ${jobId}, ${audit.actorId}, ${audit.reason.trim()},
+          ${prior}, 'closed', ${unknown}
+        )
+      `;
+      return { outcome: "closed", spendWarning: unknown };
+    });
+  } catch (error) {
+    if (quotaSchemaError(error)) return { outcome: "missing", spendWarning: false };
+    throw error;
+  }
 }
 
-/** Start a monthly period only when payment was confirmed outside this function. */
+export type PaidPeriodResult =
+  | { ok: true; start: string; last: string; duplicate: boolean; periodId: string }
+  | { ok: false; code: "invalid" | "not_found" | "conflict" | "schema_unavailable" };
+
+/**
+ * Open one monthly period from verified server-side evidence.
+ * Does not call a payment provider and does not treat a bare reference as payment.
+ */
 export async function openPaidPeriod(
   sql: Sql,
   clientId: string,
-  paymentReference: string,
+  evidence: PaymentEvidence,
   today = jerusalemToday(),
-): Promise<{ ok: true; start: string; last: string } | { ok: false; code: "invalid" | "not_found" | "conflict" | "schema_unavailable" }> {
-  if (!paidPeriodAllowed(PAYMENT_REFERENCE.test(paymentReference))) return { ok: false, code: "invalid" };
+): Promise<PaidPeriodResult> {
+  if (!paymentEvidenceAccepted(evidence)) return { ok: false, code: "invalid" };
   const window = postingWindow(today, RULES.monthly.days);
   if (!window) return { ok: false, code: "invalid" };
   try {
@@ -356,6 +474,42 @@ export async function openPaidPeriod(
       if (!client[0]) return { ok: false, code: "not_found" };
       const subscription = await tx<{ id: string }>`select client_id as id from client_subscriptions where client_id = ${clientId} limit 1 for update`;
       if (!subscription[0]) return { ok: false, code: "not_found" };
+      const existing = (await tx<{ client_id: string; period_id: string | null; amount_ils: number; currency: string }>`
+        select client_id, period_id, amount_ils::int as amount_ils, currency
+        from payment_confirmations
+        where payment_id = ${evidence.paymentId}
+        limit 1
+        for update
+      `)[0] ?? null;
+      if (existing) {
+        if (existing.client_id !== clientId || existing.amount_ils !== RULES.monthly.priceIls || existing.currency !== "ILS" || !existing.period_id) {
+          return { ok: false, code: "conflict" };
+        }
+        const period = (await tx<{ period_start: string; period_last: string }>`
+          select period_start::text as period_start, period_last::text as period_last
+          from subscription_periods
+          where id = ${existing.period_id} and client_id = ${clientId}
+          limit 1
+        `)[0] ?? null;
+        if (!period) return { ok: false, code: "conflict" };
+        return {
+          ok: true,
+          start: String(period.period_start).slice(0, 10),
+          last: String(period.period_last).slice(0, 10),
+          duplicate: true,
+          periodId: existing.period_id,
+        };
+      }
+      const periodId = crypto.randomUUID();
+      const confirmationId = crypto.randomUUID();
+      await tx`
+        insert into payment_confirmations (
+          id, payment_id, client_id, amount_ils, currency, source, confirmed_by, period_id
+        ) values (
+          ${confirmationId}, ${evidence.paymentId}, ${clientId}, ${evidence.amountIls}, ${evidence.currency},
+          ${evidence.source}, ${evidence.confirmedBy}, ${periodId}
+        )
+      `;
       await tx`
         update subscription_periods
         set status = 'cancelled'
@@ -370,11 +524,11 @@ export async function openPaidPeriod(
         insert into subscription_periods (
           id, client_id, plan_code, status, period_start, period_last, posts_quota, daily_quota, payment_reference
         ) values (
-          ${crypto.randomUUID()}, ${clientId}, 'monthly', 'active', ${window.first}, ${window.last},
-          ${RULES.monthly.total}, ${RULES.monthly.daily}, ${paymentReference}
+          ${periodId}, ${clientId}, 'monthly', 'active', ${window.first}, ${window.last},
+          ${RULES.monthly.total}, ${RULES.monthly.daily}, ${evidence.paymentId}
         )
       `;
-      return { ok: true, start: window.first, last: window.last };
+      return { ok: true, start: window.first, last: window.last, duplicate: false, periodId };
     });
   } catch (error) {
     if (quotaSchemaError(error)) return { ok: false, code: "schema_unavailable" };

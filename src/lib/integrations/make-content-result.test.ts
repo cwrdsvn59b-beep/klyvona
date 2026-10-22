@@ -92,6 +92,14 @@ async function fixture(): Promise<{ db: PGlite; sql: Sql & { texts: string[] } }
       awaiting_generation boolean,
       created_at timestamptz not null default now()
     );
+    create table webhook_deliveries (
+      id text primary key,
+      client_id text not null,
+      destination text not null,
+      status text not null,
+      http_status integer,
+      detail text
+    );
     create table subscription_periods (
       id text primary key,
       client_id text not null,
@@ -105,6 +113,7 @@ async function fixture(): Promise<{ db: PGlite; sql: Sql & { texts: string[] } }
     );
   `);
   await db.exec(readFileSync(new URL("../../../migrations/1002_instagram_generation_results.sql", import.meta.url), "utf8"));
+  await db.exec(readFileSync(new URL("../../../docs/sql/1006_period_ownership_and_payments.sql", import.meta.url), "utf8"));
   await db.query(
     "insert into clients (id, reference_code, approval_status) values ($1, 'KV-REAL1', 'approved'), ($2, 'KV-OTHER', 'approved')",
     [clientId, otherId],
@@ -118,7 +127,7 @@ async function fixture(): Promise<{ db: PGlite; sql: Sql & { texts: string[] } }
     [clientId, otherId],
   );
   await db.query(
-    "insert into publishing_jobs (id, client_id, platform, status, awaiting_generation) values ($1, $2, null, 'queued', true)",
+    "insert into publishing_jobs (id, client_id, platform, status, awaiting_generation, subscription_period_id) values ($1, $2, null, 'queued', true, 'period-a')",
     [jobId, clientId],
   );
   return { db, sql: memorySql(db) };
