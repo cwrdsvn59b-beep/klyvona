@@ -145,6 +145,7 @@ describe("interface catalogs", () => {
     const pages = [
       "src/components/onboarding-wizard.tsx",
       "src/routes/connect.tsx",
+      "src/routes/reviews.tsx",
       "src/routes/login.tsx",
       "src/routes/admin/route.tsx",
       "src/routes/privacy.tsx",

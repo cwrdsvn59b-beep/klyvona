@@ -15,10 +15,15 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as DataDeletionRouteImport } from './routes/data-deletion'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as ReviewsRouteImport } from './routes/reviews'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as ApiServerVersionRouteImport } from './routes/api/server-version'
 import { Route as AdminClientsClientIdRouteImport } from './routes/admin/clients/$clientId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiIntegrationsMakeContentResultRouteImport } from './routes/api/integrations/make/content-result'
+import { Route as ApiIntegrationsMakePhotoJobRouteImport } from './routes/api/integrations/make/photo-job'
+import { Route as ApiIntegrationsReviewsCaptionRouteImport } from './routes/api/integrations/reviews/caption'
+import { Route as ApiIntegrationsReviewsDecisionRouteImport } from './routes/api/integrations/reviews/decision'
 import { Route as ApiOauthProviderCallbackRouteImport } from './routes/api/oauth/$provider/callback'
 import { Route as ApiOauthProviderStartRouteImport } from './routes/api/oauth/$provider/start'
 import { Route as ApiOauthInstagramPermissionsRouteImport } from './routes/api/oauth/instagram/permissions'
@@ -59,6 +64,11 @@ const PrivacyRoute = PrivacyRouteImport.update({
   path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReviewsRoute = ReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -79,6 +89,30 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiIntegrationsMakeContentResultRoute =
+  ApiIntegrationsMakeContentResultRouteImport.update({
+    id: '/api/integrations/make/content-result',
+    path: '/api/integrations/make/content-result',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiIntegrationsMakePhotoJobRoute =
+  ApiIntegrationsMakePhotoJobRouteImport.update({
+    id: '/api/integrations/make/photo-job',
+    path: '/api/integrations/make/photo-job',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiIntegrationsReviewsCaptionRoute =
+  ApiIntegrationsReviewsCaptionRouteImport.update({
+    id: '/api/integrations/reviews/caption',
+    path: '/api/integrations/reviews/caption',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiIntegrationsReviewsDecisionRoute =
+  ApiIntegrationsReviewsDecisionRouteImport.update({
+    id: '/api/integrations/reviews/decision',
+    path: '/api/integrations/reviews/decision',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiOauthProviderCallbackRoute =
   ApiOauthProviderCallbackRouteImport.update({
     id: '/api/oauth/$provider/callback',
@@ -134,10 +168,15 @@ export interface FileRoutesByFullPath {
   '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
+  '/reviews': typeof ReviewsRoute
   '/api/server-version': typeof ApiServerVersionRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/integrations/make/content-result': typeof ApiIntegrationsMakeContentResultRoute
+  '/api/integrations/make/photo-job': typeof ApiIntegrationsMakePhotoJobRoute
+  '/api/integrations/reviews/caption': typeof ApiIntegrationsReviewsCaptionRoute
+  '/api/integrations/reviews/decision': typeof ApiIntegrationsReviewsDecisionRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
   '/api/oauth/instagram/permissions': typeof ApiOauthInstagramPermissionsRoute
@@ -154,10 +193,15 @@ export interface FileRoutesByTo {
   '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
+  '/reviews': typeof ReviewsRoute
   '/api/server-version': typeof ApiServerVersionRoute
   '/admin': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/integrations/make/content-result': typeof ApiIntegrationsMakeContentResultRoute
+  '/api/integrations/make/photo-job': typeof ApiIntegrationsMakePhotoJobRoute
+  '/api/integrations/reviews/caption': typeof ApiIntegrationsReviewsCaptionRoute
+  '/api/integrations/reviews/decision': typeof ApiIntegrationsReviewsDecisionRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
   '/api/oauth/instagram/permissions': typeof ApiOauthInstagramPermissionsRoute
@@ -176,10 +220,15 @@ export interface FileRoutesById {
   '/data-deletion': typeof DataDeletionRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
+  '/reviews': typeof ReviewsRoute
   '/api/server-version': typeof ApiServerVersionRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/clients/$clientId': typeof AdminClientsClientIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/integrations/make/content-result': typeof ApiIntegrationsMakeContentResultRoute
+  '/api/integrations/make/photo-job': typeof ApiIntegrationsMakePhotoJobRoute
+  '/api/integrations/reviews/caption': typeof ApiIntegrationsReviewsCaptionRoute
+  '/api/integrations/reviews/decision': typeof ApiIntegrationsReviewsDecisionRoute
   '/api/oauth/$provider/callback': typeof ApiOauthProviderCallbackRoute
   '/api/oauth/$provider/start': typeof ApiOauthProviderStartRoute
   '/api/oauth/instagram/permissions': typeof ApiOauthInstagramPermissionsRoute
@@ -199,10 +248,15 @@ export interface FileRouteTypes {
     | '/data-deletion'
     | '/login'
     | '/privacy'
+    | '/reviews'
     | '/api/server-version'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
+    | '/api/integrations/make/content-result'
+    | '/api/integrations/make/photo-job'
+    | '/api/integrations/reviews/caption'
+    | '/api/integrations/reviews/decision'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
     | '/api/oauth/instagram/permissions'
@@ -219,10 +273,15 @@ export interface FileRouteTypes {
     | '/data-deletion'
     | '/login'
     | '/privacy'
+    | '/reviews'
     | '/api/server-version'
     | '/admin'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
+    | '/api/integrations/make/content-result'
+    | '/api/integrations/make/photo-job'
+    | '/api/integrations/reviews/caption'
+    | '/api/integrations/reviews/decision'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
     | '/api/oauth/instagram/permissions'
@@ -240,10 +299,15 @@ export interface FileRouteTypes {
     | '/data-deletion'
     | '/login'
     | '/privacy'
+    | '/reviews'
     | '/api/server-version'
     | '/admin/'
     | '/admin/clients/$clientId'
     | '/api/auth/$'
+    | '/api/integrations/make/content-result'
+    | '/api/integrations/make/photo-job'
+    | '/api/integrations/reviews/caption'
+    | '/api/integrations/reviews/decision'
     | '/api/oauth/$provider/callback'
     | '/api/oauth/$provider/start'
     | '/api/oauth/instagram/permissions'
@@ -262,8 +326,13 @@ export interface RootRouteChildren {
   DataDeletionRoute: typeof DataDeletionRoute
   LoginRoute: typeof LoginRoute
   PrivacyRoute: typeof PrivacyRoute
+  ReviewsRoute: typeof ReviewsRoute
   ApiServerVersionRoute: typeof ApiServerVersionRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiIntegrationsMakeContentResultRoute: typeof ApiIntegrationsMakeContentResultRoute
+  ApiIntegrationsMakePhotoJobRoute: typeof ApiIntegrationsMakePhotoJobRoute
+  ApiIntegrationsReviewsCaptionRoute: typeof ApiIntegrationsReviewsCaptionRoute
+  ApiIntegrationsReviewsDecisionRoute: typeof ApiIntegrationsReviewsDecisionRoute
   ApiOauthProviderCallbackRoute: typeof ApiOauthProviderCallbackRoute
   ApiOauthProviderStartRoute: typeof ApiOauthProviderStartRoute
   ApiOauthInstagramPermissionsRoute: typeof ApiOauthInstagramPermissionsRoute
@@ -319,6 +388,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reviews': {
+      id: '/reviews'
+      path: '/reviews'
+      fullPath: '/reviews'
+      preLoaderRoute: typeof ReviewsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/': {
       id: '/admin/'
       path: '/'
@@ -345,6 +421,34 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/integrations/make/content-result': {
+      id: '/api/integrations/make/content-result'
+      path: '/api/integrations/make/content-result'
+      fullPath: '/api/integrations/make/content-result'
+      preLoaderRoute: typeof ApiIntegrationsMakeContentResultRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/integrations/make/photo-job': {
+      id: '/api/integrations/make/photo-job'
+      path: '/api/integrations/make/photo-job'
+      fullPath: '/api/integrations/make/photo-job'
+      preLoaderRoute: typeof ApiIntegrationsMakePhotoJobRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/integrations/reviews/caption': {
+      id: '/api/integrations/reviews/caption'
+      path: '/api/integrations/reviews/caption'
+      fullPath: '/api/integrations/reviews/caption'
+      preLoaderRoute: typeof ApiIntegrationsReviewsCaptionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/integrations/reviews/decision': {
+      id: '/api/integrations/reviews/decision'
+      path: '/api/integrations/reviews/decision'
+      fullPath: '/api/integrations/reviews/decision'
+      preLoaderRoute: typeof ApiIntegrationsReviewsDecisionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/oauth/$provider/callback': {
@@ -434,8 +538,13 @@ const rootRouteChildren: RootRouteChildren = {
   DataDeletionRoute: DataDeletionRoute,
   LoginRoute: LoginRoute,
   PrivacyRoute: PrivacyRoute,
+  ReviewsRoute: ReviewsRoute,
   ApiServerVersionRoute: ApiServerVersionRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiIntegrationsMakeContentResultRoute: ApiIntegrationsMakeContentResultRoute,
+  ApiIntegrationsMakePhotoJobRoute: ApiIntegrationsMakePhotoJobRoute,
+  ApiIntegrationsReviewsCaptionRoute: ApiIntegrationsReviewsCaptionRoute,
+  ApiIntegrationsReviewsDecisionRoute: ApiIntegrationsReviewsDecisionRoute,
   ApiOauthProviderCallbackRoute: ApiOauthProviderCallbackRoute,
   ApiOauthProviderStartRoute: ApiOauthProviderStartRoute,
   ApiOauthInstagramPermissionsRoute: ApiOauthInstagramPermissionsRoute,

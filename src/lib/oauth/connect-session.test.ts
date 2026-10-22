@@ -232,6 +232,11 @@ describe("route inventory", () => {
       "path: '/api/oauth/meta/renew'",
       "path: '/api/oauth/instagram/renew'",
       "path: '/api/oauth/meta/disconnect'",
+      "path: '/api/integrations/make/content-result'",
+      "path: '/api/integrations/make/photo-job'",
+      "path: '/reviews'",
+      "path: '/api/integrations/reviews/decision'",
+      "path: '/api/integrations/reviews/caption'",
     ]) {
       assert.match(tree, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }

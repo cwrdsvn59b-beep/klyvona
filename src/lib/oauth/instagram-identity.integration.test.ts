@@ -9,6 +9,7 @@ import { sha256Hex } from "./meta-guards.ts";
 type Sql = {
   <T = Record<string, unknown>>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T[]>;
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
+  transaction<T>(run: (tx: Sql) => Promise<T>): Promise<T>;
 };
 
 const INSTAGRAM_APP_ID = "39264341293211040";
@@ -25,6 +26,7 @@ function memorySql(db: PGlite): Sql {
     return query<T>(text, values);
   }) as Sql;
   sql.query = query;
+  sql.transaction = (run) => run(sql);
   return sql;
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, it } from "node:test";
 import {
   approvalTransition,
@@ -166,13 +166,23 @@ describe("approval contract", () => {
     assert.doesNotMatch(server.slice(server.indexOf("export async function automationReadinessForConnect"), server.indexOf("export async function automationAllowed")), /insert into|update |delete from|userToken/);
   });
 
-  it("has no publishing-job insert and no unguarded scheduled status", () => {
+  it("creates a publishing job only for an entitled photo request", () => {
     const root = new URL("../", import.meta.url);
-    const files = walk(root.pathname).filter((file) => !file.endsWith("approval.test.ts"));
-    const inserts = files.filter((file) => readFileSync(file, "utf8").includes("insert into publishing_jobs"));
-    assert.deepEqual(inserts, []);
+    const files = walk(root.pathname).filter((file) => !file.endsWith(".test.ts"));
+    const inserts = files
+      .filter((file) => readFileSync(file, "utf8").includes("insert into publishing_jobs"))
+      .map((file) => basename(file))
+      .sort();
+    assert.deepEqual(inserts, ["quota-period.ts"]);
     const scheduled = files.filter((file) => /publishing_status = 'scheduled'|publishing_status = "scheduled"/.test(readFileSync(file, "utf8")));
     assert.deepEqual(scheduled, []);
+    const creator = read("./integrations/make-photo-job.server.ts");
+    assert.match(creator, /reservePhotoSlot/);
+    assert.doesNotMatch(creator, /notifyMake|media_publish|posts_used\s*=/);
+    assert.match(creator, /content\.generation_requested/);
+    const quota = read("./integrations/quota-period.ts");
+    assert.match(quota, /checkQuota/);
+    assert.doesNotMatch(quota, /notifyMake|media_publish|posts_used\s*=/);
   });
 
   it("shows the required sentences and keeps approval controls off customer pages", () => {

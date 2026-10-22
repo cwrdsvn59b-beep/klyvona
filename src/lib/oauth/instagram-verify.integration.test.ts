@@ -15,6 +15,7 @@ const SCOPED_ID = "17841400000000077";
 type Sql = {
   <T = Record<string, unknown>>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T[]>;
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
+  transaction<T>(run: (tx: Sql) => Promise<T>): Promise<T>;
 };
 
 function memorySql(db: PGlite): Sql {
@@ -27,6 +28,7 @@ function memorySql(db: PGlite): Sql {
     return query<T>(text, values);
   }) as Sql;
   sql.query = query;
+  sql.transaction = (run) => run(sql);
   return sql;
 }
 

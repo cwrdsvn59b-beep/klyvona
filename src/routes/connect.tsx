@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { LanguageSwitcher } from "@/components/language-switcher";
@@ -301,6 +301,11 @@ function ConnectPage() {
                 : "approval.pending_approval",
         )}
       </p>
+      {receipt?.connectSecret ? (
+        <p className="mt-4 text-sm">
+          <Link to="/reviews" className="underline">{t("connect.reviews")}</Link>
+        </p>
+      ) : null}
       {shown ? (
         <p className={`mt-4 text-sm ${connectNoticeClass(shown.tone)}`} role={shown.tone === "error" ? "alert" : "status"}>
           {shown.message}

@@ -274,7 +274,8 @@ function AdminHome() {
                         <StatusPill code={client.subscriptionStatus} />
                         <StatusPill code={client.publishingStatus} />
                         <span className="inline-flex h-7 items-center rounded-full bg-bg px-3 text-sm text-muted">
-                          {planLabel(client.planCode, locale)} · {client.postsUsed}/{client.postsQuota}
+                          {planLabel(client.planCode, locale)}
+                          {client.quotaLedger === "period" ? ` · ${client.consumed}/${client.postsQuota}` : ""}
                         </span>
                       </div>
                       <p className="mt-3 text-sm text-muted">{formatWhen(client.createdAt, locale)}</p>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { getClientProfile, updateClientOps, type ClientProfile } from "@/lib/admin.functions";
+import { confirmPaidPeriod, getClientProfile, reconcilePhotoReservation, updateClientOps, type ClientProfile } from "@/lib/admin.functions";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatIls, formatWhen } from "@/lib/format";
 import { useI18n } from "@/lib/i18n/context";
@@ -10,6 +10,7 @@ import { eventStepLabel, showNotice, translateKnown } from "@/lib/i18n/surface";
 import { translate } from "@/lib/i18n/translate";
 import { industryLabel, planLabel, statusLabel, visualLabel, voiceLabel } from "@/lib/labels";
 import { ApprovalActions } from "@/components/approval-actions";
+import { AdminPhotoReviews } from "@/components/admin-photo-reviews";
 import { InstagramTestPublish } from "@/components/instagram-test-publish";
 import { StatusPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ function ClientPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [paymentReference, setPaymentReference] = useState("");
 
   useEffect(() => {
     if (!user?.id) return;
@@ -133,15 +135,44 @@ function ClientPage() {
                 {profile.priceIlsInclVat > 0 ? ` ${t("admin.perMonthVat")}` : ""}
               </p>
               <p className="mt-1 text-sm tabular-nums text-muted">
-                {t("admin.postsOf", { used: profile.postsUsed, quota: profile.postsQuota })}
+                {profile.quotaLedger === "period"
+                  ? t("admin.quotaLedger", { consumed: profile.consumed, reserved: profile.reserved, available: profile.available })
+                  : profile.quotaLedger === "unopened"
+                    ? t("admin.quotaUnopened")
+                    : t("admin.quotaUnavailable")}
               </p>
+              {profile.quotaLedger === "period" ? (
+                <p className="mt-1 text-sm text-muted" dir="ltr">
+                  {t("admin.quotaPeriod", { start: profile.periodStart ?? "", last: profile.periodLast ?? "" })}
+                </p>
+              ) : null}
               <div className="mt-3 h-2 rounded-full bg-primary-soft">
                 <div
                   className="h-2 rounded-full bg-primary"
-                  style={{ width: `${Math.min(100, (profile.postsUsed / profile.postsQuota) * 100)}%` }}
+                  style={{ width: `${profile.quotaLedger === "period" && profile.postsQuota > 0 ? Math.min(100, ((profile.consumed + profile.reserved) / profile.postsQuota) * 100) : 0}%` }}
                 />
               </div>
               <p className="mt-3 text-sm text-muted">{t("admin.videoExcluded")}</p>
+              <label className="mt-4 block text-sm">
+                {t("admin.paidReference")}
+                <input
+                  className="mt-1 w-full rounded-xl border border-line bg-bg px-3 py-2"
+                  value={paymentReference}
+                  onChange={(event) => setPaymentReference(event.target.value)}
+                />
+              </label>
+              <Button
+                className="mt-3"
+                variant="secondary"
+                onClick={() => {
+                  void confirmPaidPeriod({ data: { clientId: profile.id, paymentReference } }).then((result) => {
+                    setSaved(result.ok ? "admin.saved" : "admin.saveFailed");
+                    if (result.ok) setRefreshKey((value) => value + 1);
+                  });
+                }}
+              >
+                {t("admin.paidOpen")}
+              </Button>
             </article>
           </section>
 
@@ -232,6 +263,8 @@ function ClientPage() {
 
           <InstagramTestPublish reference={profile.reference} />
 
+          <AdminPhotoReviews clientId={profile.id} />
+
           <section className="rounded-2xl bg-surface p-4 shadow-card">
             <h2 className="font-semibold">{t("admin.jobs")}</h2>
             {profile.jobs.length === 0 ? (
@@ -241,7 +274,21 @@ function ClientPage() {
                 {profile.jobs.map((job) => (
                   <li key={job.id} className="flex items-center justify-between gap-3">
                     <span dir="ltr">{job.platform ?? t("admin.general")}</span>
-                    <StatusPill code={job.status} />
+                    <span className="flex items-center gap-2">
+                      {job.status === "queued" ? (
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            void reconcilePhotoReservation({ data: { clientId: profile.id, jobId: job.id } }).then(() => {
+                              setRefreshKey((value) => value + 1);
+                            });
+                          }}
+                        >
+                          {t("admin.reconcile")}
+                        </Button>
+                      ) : null}
+                      <StatusPill code={job.status} />
+                    </span>
                   </li>
                 ))}
               </ul>

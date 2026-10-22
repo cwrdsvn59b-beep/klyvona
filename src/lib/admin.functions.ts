@@ -31,6 +31,12 @@ export type ClientListItem = {
   approvalStatus: string;
   postsUsed: number;
   postsQuota: number;
+  quotaLedger: "period" | "unopened" | "unavailable";
+  consumed: number;
+  reserved: number;
+  available: number;
+  periodStart: string | null;
+  periodLast: string | null;
   createdAt: string;
   socials: SocialSnap[];
 };
@@ -67,6 +73,57 @@ async function requireAdmin(userId: string): Promise<void> {
   const { resolveAdminAccess } = await import("@/lib/admin-grant.server");
   const access = await resolveAdminAccess(userId);
   if (!access.isAdmin) throw new Error("אין הרשאת ניהול");
+}
+
+async function overlayQuota(items: ClientListItem[]): Promise<void> {
+  if (items.length === 0) return;
+  const sql = await getSql();
+  try {
+    const rows = await sql.query<{
+      client_id: string;
+      period_start: string;
+      period_last: string;
+      posts_quota: number;
+      consumed: number;
+      reserved: number;
+    }>(
+      `select sp.client_id,
+        sp.period_start::text as period_start,
+        sp.period_last::text as period_last,
+        sp.posts_quota::int as posts_quota,
+        (select count(*)::int from instagram_generation_results r
+          where r.client_id = sp.client_id and r.status = 'generated'
+            and (r.created_at at time zone 'Asia/Jerusalem')::date between sp.period_start and sp.period_last) as consumed,
+        (select count(*)::int from publishing_jobs j
+          where j.client_id = sp.client_id and j.platform = 'instagram' and j.status = 'queued' and j.awaiting_generation is true
+            and (j.created_at at time zone 'Asia/Jerusalem')::date between sp.period_start and sp.period_last) as reserved
+      from subscription_periods sp
+      where sp.status in ('trial', 'active') and sp.client_id = any($1::text[])`,
+      [items.map((item) => item.id)],
+    );
+    const byId = new Map(rows.map((row) => [row.client_id, row]));
+    for (const item of items) {
+      const row = byId.get(item.id);
+      if (!row) {
+        item.quotaLedger = "unopened";
+        item.consumed = 0;
+        item.reserved = 0;
+        item.available = 0;
+        continue;
+      }
+      item.quotaLedger = "period";
+      item.consumed = Number(row.consumed);
+      item.reserved = Number(row.reserved);
+      item.postsQuota = Number(row.posts_quota);
+      item.postsUsed = item.consumed;
+      item.available = Math.max(0, item.postsQuota - item.consumed - item.reserved);
+      item.periodStart = String(row.period_start).slice(0, 10);
+      item.periodLast = String(row.period_last).slice(0, 10);
+    }
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
+    if (code !== "42P01" && code !== "42703") throw error;
+  }
 }
 
 function likePattern(query: string): string {
@@ -113,6 +170,12 @@ function toListItem(row: ClientRow, socials: SocialSnap[]): ClientListItem {
     approvalStatus: row.approval_status,
     postsUsed: Number(row.posts_used),
     postsQuota: Number(row.posts_quota),
+    quotaLedger: "unavailable",
+    consumed: 0,
+    reserved: 0,
+    available: Number(row.posts_quota),
+    periodStart: null,
+    periodLast: null,
     createdAt: row.created_at,
     socials,
   };
@@ -339,6 +402,8 @@ export const getDashboard = createServerFn({ method: "GET" })
     ];
 
     const { integrationHealth } = await import("@/lib/integrations/health.server");
+    const clients = rows.map((row) => toListItem(row, socialMap.get(row.id) ?? []));
+    await overlayQuota(clients);
 
     return {
       stats: {
@@ -349,7 +414,7 @@ export const getDashboard = createServerFn({ method: "GET" })
       },
       warnings,
       integrations: integrationHealth(),
-      clients: rows.map((row) => toListItem(row, socialMap.get(row.id) ?? [])),
+      clients,
     };
   });
 
@@ -404,7 +469,7 @@ export const getClientProfile = createServerFn({ method: "GET" })
       where client_id = ${clientId}
       order by created_at desc
     `;
-    return {
+    const profile = {
       ...toListItem(row, socialMap.get(clientId) ?? []),
       description: row.description,
       targetAudience: row.target_audience,
@@ -435,6 +500,8 @@ export const getClientProfile = createServerFn({ method: "GET" })
         createdAt: hook.created_at,
       })),
     };
+    await overlayQuota([profile]);
+    return profile;
   });
 
 export const updateClientOps = createServerFn({ method: "POST" })
@@ -523,4 +590,39 @@ export const updateClientOps = createServerFn({ method: "POST" })
       values (${crypto.randomUUID()}, ${data.clientId}, 'admin', 'updated', ${detail})
     `;
     return { ok: true as const };
+  });
+
+export const confirmPaidPeriod = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: unknown) => {
+    if (typeof input !== "object" || input === null) throw new Error("בקשה לא תקינה");
+    const body = input as { clientId?: unknown; paymentReference?: unknown };
+    const clientId = typeof body.clientId === "string" ? body.clientId : "";
+    const paymentReference = typeof body.paymentReference === "string" ? body.paymentReference.trim() : "";
+    if (!/^[0-9a-f-]{36}$/i.test(clientId) || paymentReference.length < 8) throw new Error("בקשה לא תקינה");
+    return { clientId, paymentReference };
+  })
+  .handler(async ({ context, data }) => {
+    await requireAdmin(context.userId);
+    const { openPaidPeriod } = await import("@/lib/integrations/quota-period");
+    const opened = await openPaidPeriod(await getSql(), data.clientId, data.paymentReference);
+    if (!opened.ok) return { ok: false as const, code: opened.code };
+    return { ok: true as const, start: opened.start, last: opened.last };
+  });
+
+export const reconcilePhotoReservation = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: unknown) => {
+    if (typeof input !== "object" || input === null) throw new Error("בקשה לא תקינה");
+    const body = input as { clientId?: unknown; jobId?: unknown };
+    const clientId = typeof body.clientId === "string" ? body.clientId : "";
+    const jobId = typeof body.jobId === "string" ? body.jobId : "";
+    if (!/^[0-9a-f-]{36}$/i.test(clientId) || !/^[0-9a-f-]{36}$/i.test(jobId)) throw new Error("מזהה לא תקין");
+    return { clientId, jobId };
+  })
+  .handler(async ({ context, data }) => {
+    await requireAdmin(context.userId);
+    const { reconcileFailedReservation } = await import("@/lib/integrations/quota-period");
+    const result = await reconcileFailedReservation(await getSql(), data.clientId, data.jobId);
+    return { ok: result === "closed", result };
   });

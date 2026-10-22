@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "הצטרפות · KLYVONA Connect",
+      "hasCanvas": false,
+      "bodyTextLen": 584,
+      "bodyTextHash": "bbb270a21063ab50c7c1ab1d3da66d91e72d6c8c3c1ffadac018a0f3a2f9c534",
+      "bodyTextPrefix": "KLYVONA הבינה שמקדמת את העסק שלך 1 ברוכים הבאים 2 פרטי העסק 3 רש",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "הצטרפות · KLYVONA Connect",
+      "hasCanvas": false,
+      "bodyTextLen": 455,
+      "bodyTextHash": "2a09d0452eee6d469c4a47de69534b7200970a853423a4c741644b9f3fe95be0",
+      "bodyTextPrefix": "KLYVONA הבינה שמקדמת את העסק שלך שלב 1 מתוך 5 KLYVONA מנהלת את ה",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}
