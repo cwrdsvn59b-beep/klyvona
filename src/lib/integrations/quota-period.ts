@@ -397,7 +397,7 @@ export async function releaseUnsentReservation(sql: Sql, clientId: string, jobId
         where d.client_id = ${clientId}
           and d.destination = 'make-content'
           and d.detail = ${`job:${jobId}`}
-          and d.dispatch_state in ('attempted_unknown', 'confirmed_generated', 'confirmed_not_started')
+          and (d.dispatch_state is null or d.dispatch_state <> 'never_attempted')
       )
   `;
 }
@@ -581,7 +581,35 @@ export async function openPaidPeriod(
     });
   } catch (error) {
     if (quotaSchemaError(error)) return { ok: false, code: "schema_unavailable" };
-    if (uniqueViolation(error)) return { ok: false, code: "conflict" };
-    throw error;
+    if (!uniqueViolation(error)) throw error;
+    return replayPaidPeriod(sql, clientId, evidence.paymentId);
   }
+}
+
+/** A lost race must report the committed payment, not open a second period. */
+async function replayPaidPeriod(sql: Sql, clientId: string, paymentId: string): Promise<PaidPeriodResult> {
+  const existing = (await sql<{ client_id: string; period_id: string | null; amount_ils: number; currency: string }>`
+    select client_id, period_id, amount_ils::int as amount_ils, currency
+    from payment_confirmations
+    where payment_id = ${paymentId}
+    limit 1
+  `)[0] ?? null;
+  if (!existing || existing.client_id !== clientId || existing.amount_ils !== RULES.monthly.priceIls || existing.currency !== "ILS") {
+    return { ok: false, code: "conflict" };
+  }
+  if (!existing.period_id) return { ok: false, code: "renewal_blocked" };
+  const period = (await sql<{ period_start: string; period_last: string }>`
+    select period_start::text as period_start, period_last::text as period_last
+    from subscription_periods
+    where id = ${existing.period_id} and client_id = ${clientId}
+    limit 1
+  `)[0] ?? null;
+  if (!period) return { ok: false, code: "conflict" };
+  return {
+    ok: true,
+    start: String(period.period_start).slice(0, 10),
+    last: String(period.period_last).slice(0, 10),
+    duplicate: true,
+    periodId: existing.period_id,
+  };
 }

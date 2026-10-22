@@ -91,27 +91,25 @@ async function deliveryFor(sql: Sql, jobId: string): Promise<Delivery | null> {
 /** Mark the chargeable attempt before the network call so a crash cannot retry it. */
 async function claimSend(sql: Sql, clientId: string, jobId: string): Promise<"send" | "busy"> {
   const detail = jobDetail(jobId);
-  try {
-    await sql`
+  return sql.transaction(async (tx) => {
+    await tx`
       insert into webhook_deliveries (id, client_id, destination, status, detail, dispatch_state)
       values (${crypto.randomUUID()}, ${clientId}, ${CONTENT_DESTINATION}, 'skipped', ${detail}, null)
+      on conflict (detail) where destination = 'make-content' do nothing
     `;
-  } catch (error) {
-    if (!uniqueViolation(error)) throw error;
-  }
-  const claimed = await sql<{ id: string }>`
-    update webhook_deliveries
-    set http_status = 0, dispatch_state = 'attempted_unknown'
-    where destination = ${CONTENT_DESTINATION}
-      and detail = ${detail}
-      and client_id = ${clientId}
-      and status = 'skipped'
-      and http_status is null
-      and (dispatch_state is null or dispatch_state = 'never_attempted')
-    returning id
-  `;
-  if (claimed[0]) return "send";
-  return "busy";
+    const claimed = await tx<{ id: string }>`
+      update webhook_deliveries
+      set http_status = 0, dispatch_state = 'attempted_unknown'
+      where destination = ${CONTENT_DESTINATION}
+        and detail = ${detail}
+        and client_id = ${clientId}
+        and status = 'skipped'
+        and http_status is null
+        and (dispatch_state is null or dispatch_state = 'never_attempted')
+      returning id
+    `;
+    return claimed[0] ? "send" : "busy";
+  });
 }
 
 async function finishSend(sql: Sql, jobId: string, result: PhotoDispatchResult): Promise<void> {

@@ -75,6 +75,17 @@ create table if not exists payment_confirmations (
 create unique index if not exists payment_confirmations_payment_id_idx
   on payment_confirmations (payment_id);
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'payment_confirmations_amount_chk'
+  ) then
+    alter table payment_confirmations
+      add constraint payment_confirmations_amount_chk
+      check (amount_ils = 600 and currency = 'ILS');
+  end if;
+end $$;
+
 create table if not exists quota_reconciliations (
   id text primary key,
   client_id text not null references clients (id) on delete cascade,
@@ -139,6 +150,7 @@ create unique index if not exists payment_confirmations_one_period_idx
 -- Rollback of an EMPTY draft schema only. Do not drop these tables after real
 -- payment rows or generation history exist; that would destroy evidence.
 -- drop index if exists payment_confirmations_one_period_idx;
+-- alter table payment_confirmations drop constraint if exists payment_confirmations_amount_chk;
 -- alter table payment_confirmations drop constraint if exists payment_confirmations_period_client_fk;
 -- alter table instagram_generation_results drop constraint if exists instagram_generation_results_job_client_fk;
 -- alter table instagram_generation_results drop constraint if exists instagram_generation_results_period_client_fk;

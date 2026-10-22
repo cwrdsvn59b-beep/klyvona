@@ -79,6 +79,10 @@ describe("pending subscription SQL on a local PGLite copy", () => {
       "insert into payment_confirmations (id, payment_id, client_id, amount_ils, currency, source, confirmed_by) values ('pay-2', 'bank-ref-001', $1, 600, 'ILS', 'admin_attestation', 'admin-user')",
       [otherId],
     ));
+    await assert.rejects(db.query(
+      "insert into payment_confirmations (id, payment_id, client_id, amount_ils, currency, source, confirmed_by) values ('pay-3', 'bank-ref-003', $1, 100, 'ILS', 'admin_attestation', 'admin-user')",
+      [clientId],
+    ));
     const ownedJob = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     await db.query(
       "insert into publishing_jobs (id, client_id, platform, status, subscription_period_id) values ($1, $2, 'instagram', 'failed', 'period-a')",

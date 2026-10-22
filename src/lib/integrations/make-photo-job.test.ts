@@ -723,4 +723,27 @@ describe("photo generation lifecycle", () => {
     const deliveries = await sql<{ count: number }>`select count(*)::int as count from webhook_deliveries`;
     assert.equal(Number(deliveries[0]?.count), 0);
   });
+
+  it("does not release a reservation while its delivery state is still empty", async () => {
+    const sql = await fixture();
+    const recorder = dispatchRecorder();
+    const created = await createPhotoGenerationJob({
+      sql,
+      reference,
+      connectSecret,
+      contentType: "photo",
+      today: "2026-10-22",
+      dispatch: recorder.dispatch,
+    });
+    const jobId = (await created.json()).job_id as string;
+    await sql`update webhook_deliveries set dispatch_state = null where detail = ${`job:${jobId}`}`;
+    const { releaseUnsentReservation } = await import("@/lib/integrations/quota-period");
+    await releaseUnsentReservation(sql, clientId, jobId);
+    const job = await sql<{ awaiting_generation: boolean; status: string }>`
+      select awaiting_generation, status from publishing_jobs where id = ${jobId}
+    `;
+    assert.equal(job[0]?.awaiting_generation, true);
+    assert.equal(job[0]?.status, "queued");
+    assert.equal(recorder.notices.length, 1);
+  });
 });
