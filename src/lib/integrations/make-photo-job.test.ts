@@ -744,6 +744,33 @@ describe("photo generation lifecycle", () => {
     `;
     assert.equal(job[0]?.awaiting_generation, true);
     assert.equal(job[0]?.status, "queued");
+    const { reconcileFailedReservation } = await import("@/lib/integrations/quota-period");
+    const refused = await reconcileFailedReservation(sql, clientId, jobId, {
+      actorId: adminId,
+      reason: "empty dispatch must not release",
+      acknowledgeSpendRisk: false,
+    });
+    assert.equal(refused.outcome, "spend_unknown");
+    const held = await reconcileFailedReservation(sql, clientId, jobId, {
+      actorId: adminId,
+      reason: "empty dispatch stays reserved",
+      acknowledgeSpendRisk: true,
+    });
+    assert.equal(held.outcome, "pending_decision");
+    assert.equal(held.spendWarning, true);
+    const repeat = await createPhotoGenerationJob({
+      sql,
+      reference,
+      connectSecret,
+      contentType: "photo",
+      today: "2026-10-22",
+      dispatch: recorder.dispatch,
+    });
+    assert.equal((await repeat.json()).job_id, jobId);
     assert.equal(recorder.notices.length, 1);
+    const after = await sql<{ awaiting_generation: boolean }>`
+      select awaiting_generation from publishing_jobs where id = ${jobId}
+    `;
+    assert.equal(after[0]?.awaiting_generation, true);
   });
 });

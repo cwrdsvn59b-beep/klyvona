@@ -435,7 +435,8 @@ export async function reconcileFailedReservation(
         where client_id = ${clientId} and destination = 'make-content' and detail = ${`job:${jobId}`}
         limit 1
       `)[0] ?? null;
-      const prior = delivery?.dispatch_state ?? "never_attempted";
+      // Null is unknown only when a delivery row exists. Do not treat it as never_attempted.
+      const prior = delivery ? delivery.dispatch_state : "never_attempted";
       if (prior === "confirmed_generated") return { outcome: "kept", spendWarning: false };
       if (delivery && prior !== "never_attempted") {
         if (!audit.acknowledgeSpendRisk) return { outcome: "spend_unknown", spendWarning: true };
