@@ -75,6 +75,17 @@ create table if not exists payment_confirmations (
 create unique index if not exists payment_confirmations_payment_id_idx
   on payment_confirmations (payment_id);
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'payment_confirmations_amount_chk'
+  ) then
+    alter table payment_confirmations
+      add constraint payment_confirmations_amount_chk
+      check (amount_ils = 600 and currency = 'ILS');
+  end if;
+end $$;
+
 create table if not exists quota_reconciliations (
   id text primary key,
   client_id text not null references clients (id) on delete cascade,
@@ -87,7 +98,65 @@ create table if not exists quota_reconciliations (
   created_at timestamptz not null default now()
 );
 
--- Rollback, run only when this draft schema must be removed and its rows may be dropped:
+-- Same-client ownership. A plain foreign key on the period id does not stop
+-- client A from pointing at client B's period. Match is SIMPLE, so a null
+-- period id on a legacy row is left untouched.
+create unique index if not exists subscription_periods_id_client_idx
+  on subscription_periods (id, client_id);
+
+create unique index if not exists publishing_jobs_id_client_idx
+  on publishing_jobs (id, client_id);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'publishing_jobs_period_client_fk'
+  ) then
+    alter table publishing_jobs
+      add constraint publishing_jobs_period_client_fk
+      foreign key (subscription_period_id, client_id)
+      references subscription_periods (id, client_id);
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conname = 'instagram_generation_results_period_client_fk'
+  ) then
+    alter table instagram_generation_results
+      add constraint instagram_generation_results_period_client_fk
+      foreign key (subscription_period_id, client_id)
+      references subscription_periods (id, client_id);
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conname = 'instagram_generation_results_job_client_fk'
+  ) then
+    alter table instagram_generation_results
+      add constraint instagram_generation_results_job_client_fk
+      foreign key (job_id, client_id)
+      references publishing_jobs (id, client_id);
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conname = 'payment_confirmations_period_client_fk'
+  ) then
+    alter table payment_confirmations
+      add constraint payment_confirmations_period_client_fk
+      foreign key (period_id, client_id)
+      references subscription_periods (id, client_id);
+  end if;
+end $$;
+
+create unique index if not exists payment_confirmations_one_period_idx
+  on payment_confirmations (period_id)
+  where period_id is not null;
+
+-- Rollback of an EMPTY draft schema only. Do not drop these tables after real
+-- payment rows or generation history exist; that would destroy evidence.
+-- drop index if exists payment_confirmations_one_period_idx;
+-- alter table payment_confirmations drop constraint if exists payment_confirmations_amount_chk;
+-- alter table payment_confirmations drop constraint if exists payment_confirmations_period_client_fk;
+-- alter table instagram_generation_results drop constraint if exists instagram_generation_results_job_client_fk;
+-- alter table instagram_generation_results drop constraint if exists instagram_generation_results_period_client_fk;
+-- alter table publishing_jobs drop constraint if exists publishing_jobs_period_client_fk;
+-- drop index if exists publishing_jobs_id_client_idx;
+-- drop index if exists subscription_periods_id_client_idx;
 -- drop table if exists quota_reconciliations;
 -- drop table if exists payment_confirmations;
 -- alter table webhook_deliveries drop constraint if exists webhook_deliveries_dispatch_state_chk;

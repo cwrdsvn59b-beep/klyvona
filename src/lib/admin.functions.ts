@@ -65,7 +65,16 @@ export type ClientProfile = ClientListItem & {
   visualStyle: string;
   priceIlsInclVat: number;
   events: Array<{ id: string; step: string; status: string; detail: string | null; createdAt: string }>;
-  jobs: Array<{ id: string; platform: string | null; status: string; errorMessage: string | null; createdAt: string }>;
+  jobs: Array<{
+    id: string;
+    platform: string | null;
+    status: string;
+    errorMessage: string | null;
+    createdAt: string;
+    dispatchState: string | null;
+    hasResult: boolean;
+    spendUncertain: boolean;
+  }>;
   webhooks: Array<{ id: string; destination: string; status: string; httpStatus: number | null; detail: string | null; createdAt: string }>;
 };
 
@@ -418,6 +427,121 @@ export const getDashboard = createServerFn({ method: "GET" })
     };
   });
 
+type AdminJobRow = {
+  id: string;
+  platform: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+  dispatch_state: string | null;
+  has_result: boolean;
+  spend_uncertain: boolean;
+};
+
+function schemaGap(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined;
+  return code === "42P01" || code === "42703";
+}
+
+async function jobsForAdmin(sql: Awaited<ReturnType<typeof getSql>>, clientId: string): Promise<AdminJobRow[]> {
+  const mapSpend = (job: {
+    id: string;
+    platform: string | null;
+    status: string;
+    error_message: string | null;
+    created_at: string;
+    dispatch_state: string | null;
+    has_result: boolean;
+    has_delivery: boolean;
+  }): AdminJobRow => ({
+    id: job.id,
+    platform: job.platform,
+    status: job.status,
+    error_message: job.error_message,
+    created_at: job.created_at,
+    dispatch_state: job.dispatch_state,
+    has_result: Boolean(job.has_result),
+    spend_uncertain: job.dispatch_state === "attempted_unknown"
+      || job.dispatch_state === "confirmed_not_started"
+      || (Boolean(job.has_delivery) && job.dispatch_state == null),
+  });
+  try {
+    const rows = await sql<{
+      id: string;
+      platform: string | null;
+      status: string;
+      error_message: string | null;
+      created_at: string;
+      dispatch_state: string | null;
+      has_result: boolean;
+      has_delivery: boolean;
+    }>`
+      select j.id, j.platform, j.status, j.error_message, j.created_at::text as created_at,
+        d.dispatch_state,
+        (d.id is not null) as has_delivery,
+        exists (
+          select 1 from instagram_generation_results r
+          where r.job_id = j.id and r.client_id = j.client_id
+        ) as has_result
+      from publishing_jobs j
+      left join webhook_deliveries d
+        on d.client_id = j.client_id
+       and d.destination = 'make-content'
+       and d.detail = ('job:' || j.id)
+      where j.client_id = ${clientId}
+      order by j.created_at desc
+    `;
+    return rows.map(mapSpend);
+  } catch (error) {
+    if (!schemaGap(error)) throw error;
+  }
+  try {
+    const rows = await sql<{
+      id: string;
+      platform: string | null;
+      status: string;
+      error_message: string | null;
+      created_at: string;
+      has_result: boolean;
+      has_delivery: boolean;
+    }>`
+      select j.id, j.platform, j.status, j.error_message, j.created_at::text as created_at,
+        exists (
+          select 1 from webhook_deliveries d
+          where d.client_id = j.client_id and d.destination = 'make-content' and d.detail = ('job:' || j.id)
+        ) as has_delivery,
+        exists (
+          select 1 from instagram_generation_results r
+          where r.job_id = j.id and r.client_id = j.client_id
+        ) as has_result
+      from publishing_jobs j
+      where j.client_id = ${clientId}
+      order by j.created_at desc
+    `;
+    return rows.map((job) => mapSpend({ ...job, dispatch_state: null }));
+  } catch (error) {
+    if (!schemaGap(error)) throw error;
+    const rows = await sql<{
+      id: string;
+      platform: string | null;
+      status: string;
+      error_message: string | null;
+      created_at: string;
+    }>`
+      select id, platform, status, error_message, created_at::text as created_at
+      from publishing_jobs
+      where client_id = ${clientId}
+      order by created_at desc
+    `;
+    return rows.map((job) => ({
+      ...job,
+      dispatch_state: null,
+      has_result: false,
+      spend_uncertain: false,
+    }));
+  }
+}
+
 export const getClientProfile = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator((input: unknown) => {
@@ -444,18 +568,7 @@ export const getClientProfile = createServerFn({ method: "GET" })
       where client_id = ${clientId}
       order by created_at asc
     `;
-    const jobs = await sql<{
-      id: string;
-      platform: string | null;
-      status: string;
-      error_message: string | null;
-      created_at: string;
-    }>`
-      select id, platform, status, error_message, created_at::text as created_at
-      from publishing_jobs
-      where client_id = ${clientId}
-      order by created_at desc
-    `;
+    const jobs = await jobsForAdmin(sql, clientId);
     const webhooks = await sql<{
       id: string;
       destination: string;
@@ -490,6 +603,9 @@ export const getClientProfile = createServerFn({ method: "GET" })
         status: job.status,
         errorMessage: job.error_message,
         createdAt: job.created_at,
+        dispatchState: job.dispatch_state,
+        hasResult: job.has_result,
+        spendUncertain: job.spend_uncertain,
       })),
       webhooks: webhooks.map((hook) => ({
         id: hook.id,
@@ -637,5 +753,5 @@ export const reconcilePhotoReservation = createServerFn({ method: "POST" })
       reason: data.reason,
       acknowledgeSpendRisk: data.acknowledgeSpendRisk,
     });
-    return { ok: result.outcome === "closed", result: result.outcome, spendWarning: result.spendWarning };
+    return { ok: result.outcome === "closed" || result.outcome === "pending_decision", result: result.outcome, spendWarning: result.spendWarning };
   });

@@ -91,27 +91,25 @@ async function deliveryFor(sql: Sql, jobId: string): Promise<Delivery | null> {
 /** Mark the chargeable attempt before the network call so a crash cannot retry it. */
 async function claimSend(sql: Sql, clientId: string, jobId: string): Promise<"send" | "busy"> {
   const detail = jobDetail(jobId);
-  try {
-    await sql`
+  return sql.transaction(async (tx) => {
+    await tx`
       insert into webhook_deliveries (id, client_id, destination, status, detail, dispatch_state)
       values (${crypto.randomUUID()}, ${clientId}, ${CONTENT_DESTINATION}, 'skipped', ${detail}, null)
+      on conflict (detail) where destination = 'make-content' do nothing
     `;
-  } catch (error) {
-    if (!uniqueViolation(error)) throw error;
-  }
-  const claimed = await sql<{ id: string }>`
-    update webhook_deliveries
-    set http_status = 0, dispatch_state = 'attempted_unknown'
-    where destination = ${CONTENT_DESTINATION}
-      and detail = ${detail}
-      and client_id = ${clientId}
-      and status = 'skipped'
-      and http_status is null
-      and (dispatch_state is null or dispatch_state = 'never_attempted')
-    returning id
-  `;
-  if (claimed[0]) return "send";
-  return "busy";
+    const claimed = await tx<{ id: string }>`
+      update webhook_deliveries
+      set http_status = 0, dispatch_state = 'attempted_unknown'
+      where destination = ${CONTENT_DESTINATION}
+        and detail = ${detail}
+        and client_id = ${clientId}
+        and status = 'skipped'
+        and http_status is null
+        and (dispatch_state is null or dispatch_state = 'never_attempted')
+      returning id
+    `;
+    return claimed[0] ? "send" : "busy";
+  });
 }
 
 async function finishSend(sql: Sql, jobId: string, result: PhotoDispatchResult): Promise<void> {
@@ -167,6 +165,21 @@ function queued(
   });
 }
 
+async function releaseIfUnclaimed(sql: Sql, clientId: string, jobId: string): Promise<void> {
+  await sql`
+    update publishing_jobs
+    set awaiting_generation = false, status = 'failed', error_message = 'schema_unavailable'
+    where id = ${jobId} and client_id = ${clientId} and awaiting_generation is true
+      and not exists (
+        select 1 from webhook_deliveries d
+        where d.client_id = ${clientId}
+          and d.destination = ${CONTENT_DESTINATION}
+          and d.detail = ${jobDetail(jobId)}
+      )
+      and not exists (select 1 from instagram_generation_results r where r.job_id = publishing_jobs.id)
+  `;
+}
+
 /**
  * Open one queued Instagram photo job for the authenticated client, then ask
  * Make to generate it. A repeat reuses that job and does not spend another slot.
@@ -199,7 +212,14 @@ export async function createPhotoGenerationJob(input: {
       input.dispatch ?? dispatchPhotoGeneration,
     );
   } catch (error) {
-    if (quotaSchemaError(error)) return json(503, { ok: false, code: "schema_unavailable" });
+    if (quotaSchemaError(error)) {
+      try {
+        await releaseIfUnclaimed(input.sql, client.id, reserved.jobId);
+      } catch {
+        // The delivery table may be missing too. Do not turn that into a second send.
+      }
+      return json(503, { ok: false, code: "schema_unavailable" });
+    }
     throw error;
   }
 }

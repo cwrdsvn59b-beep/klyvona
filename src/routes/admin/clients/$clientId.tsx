@@ -185,8 +185,14 @@ function ClientPage() {
                       currency: "ILS",
                     },
                   }).then((result) => {
-                    setSaved(result.ok ? "admin.saved" : "admin.saveFailed");
-                    if (result.ok) setRefreshKey((value) => value + 1);
+                    if (result.ok) {
+                      setSaved("key:admin.saved");
+                      setRefreshKey((value) => value + 1);
+                    } else if (result.code === "renewal_blocked") {
+                      setSaved("key:admin.renewalBlocked");
+                    } else {
+                      setSaved("key:admin.saveFailed");
+                    }
                   });
                 }}
               >
@@ -300,8 +306,13 @@ function ClientPage() {
             ) : (
               <ul className="mt-3 grid gap-2 text-sm">
                 {profile.jobs.map((job) => (
-                  <li key={job.id} className="flex items-center justify-between gap-3">
-                    <span dir="ltr">{job.platform ?? t("admin.general")}</span>
+                  <li key={job.id} className="grid gap-2 rounded-xl bg-bg px-3 py-3">
+                    <span className="font-medium capitalize" dir="ltr">{job.platform ?? t("admin.general")}</span>
+                    <span className="text-xs text-muted" dir="ltr">{job.id}</span>
+                    <span className="text-xs text-muted">{t("admin.jobCreated", { when: job.createdAt })}</span>
+                    <span className="text-xs text-muted">{t("admin.jobDispatch")}: <span dir="ltr">{job.dispatchState ?? t("admin.jobDispatchMissing")}</span></span>
+                    <span className="text-xs text-muted">{job.hasResult ? t("admin.jobHasResult") : t("admin.jobNoResult")}</span>
+                    <span className="text-xs text-muted">{job.spendUncertain ? t("admin.jobSpendUncertain") : t("admin.jobSpendClear")}</span>
                     <span className="flex items-center gap-2">
                       {job.status === "queued" ? (
                         <Button
@@ -314,7 +325,15 @@ function ClientPage() {
                                 reason: reconcileReason,
                                 acknowledgeSpendRisk: true,
                               },
-                            }).then(() => {
+                            }).then((result) => {
+                              const key = result.result === "pending_decision"
+                                ? "admin.jobSpendUncertain"
+                                : result.result === "legacy_unclassified"
+                                  ? "admin.legacyUnclassified"
+                                  : result.ok
+                                    ? "admin.saved"
+                                    : "admin.saveFailed";
+                              setSaved(`key:${key}`);
                               setRefreshKey((value) => value + 1);
                             });
                           }}
